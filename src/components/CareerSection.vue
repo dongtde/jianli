@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { ArrowRight, BriefcaseBusiness } from 'lucide-vue-next'
+import { Clock3, MoveRight } from 'lucide-vue-next'
+import { buildCareerTimeline } from '../utils/timeline'
 
 const props = defineProps({
   active: { type: Boolean, default: false },
@@ -8,21 +9,7 @@ const props = defineProps({
   experience: { type: Array, required: true },
 })
 
-/**
- * Work history ordered from the earliest role to the current role.
- * @type {import('vue').ComputedRef<Array<{period: string, company: string, role: string, signal: string, sequence: string, current: boolean}>>}
- */
-const timelineExperience = computed(() => {
-  const orderedExperience = [...props.experience].sort((first, second) => first.period.localeCompare(second.period))
-
-  return orderedExperience.map((item, index) => ({
-    ...item,
-    sequence: String(index + 1).padStart(2, '0'),
-    current: item.period.includes('至今'),
-  }))
-})
-
-const startYear = computed(() => timelineExperience.value[0]?.period.slice(0, 4) ?? '')
+const careerTimeline = computed(() => buildCareerTimeline(props.experience))
 </script>
 
 <template>
@@ -30,38 +17,71 @@ const startYear = computed(() => timelineExperience.value[0]?.period.slice(0, 4)
     <div class="section-content career-content">
       <header class="career-header">
         <div class="career-title-group">
-          <p class="eyebrow"><BriefcaseBusiness :size="15" /> WORK EXPERIENCE</p>
+          <p class="eyebrow"><Clock3 :size="15" /> CAREER CHRONOGRAPH</p>
           <h2 id="route-title">工作经验</h2>
         </div>
 
-        <div class="career-range" :aria-label="`${startYear} 年至今`">
-          <span>{{ startYear }}</span>
-          <ArrowRight :size="20" aria-hidden="true" />
-          <strong>NOW</strong>
+        <div class="career-summary">
+          <div class="career-range" :aria-label="`${careerTimeline.startLabel} 至今`">
+            <span>{{ careerTimeline.startLabel }}</span>
+            <MoveRight :size="20" aria-hidden="true" />
+            <strong>NOW</strong>
+          </div>
+          <p>累计实战 <strong>{{ careerTimeline.totalDurationLabel }}</strong></p>
         </div>
       </header>
 
-      <ol class="career-timeline">
-        <li
-          v-for="item in timelineExperience"
-          :key="item.company"
-          class="career-timeline-item"
-          :class="{ 'career-current': item.current }"
-          :aria-current="item.current ? 'true' : undefined"
-        >
-          <span class="career-marker" aria-hidden="true"><span></span></span>
+      <div class="career-chronograph">
+        <div class="chronograph-axis" aria-hidden="true">
+          <span
+            v-for="(tick, index) in careerTimeline.ticks"
+            :key="tick.label"
+            class="chronograph-tick"
+            :class="{ 'chronograph-tick-first': index === 0 }"
+            :style="{ '--tick-position': `${tick.position}%` }"
+          >
+            {{ tick.label }}
+          </span>
+          <strong>NOW</strong>
+        </div>
 
-          <div class="career-meta">
-            <span class="career-sequence">{{ item.sequence }}</span>
-            <span v-if="item.current" class="career-current-label">当前</span>
-          </div>
+        <ol class="chronograph-rows">
+          <li
+            v-for="(item, index) in careerTimeline.entries"
+            :key="item.company"
+            class="chronograph-row"
+            :class="{ 'chronograph-current': item.current }"
+            :aria-current="item.current ? 'true' : undefined"
+          >
+            <div class="chronograph-copy">
+              <div class="chronograph-meta">
+                <span>{{ item.sequence }}</span>
+                <time>{{ item.period }}</time>
+                <strong v-if="item.current">进行中</strong>
+              </div>
+              <h3>{{ item.company }}</h3>
+              <p class="chronograph-role">{{ item.role }}</p>
+              <p class="chronograph-signal">{{ item.signal }}</p>
+            </div>
 
-          <time>{{ item.period }}</time>
-          <h3>{{ item.company }}</h3>
-          <p class="career-role">{{ item.role }}</p>
-          <p class="career-signal">{{ item.signal }}</p>
-        </li>
-      </ol>
+            <div
+              class="chronograph-track"
+              :aria-label="`${item.period}，任职 ${item.durationLabel}`"
+              :style="{
+                '--career-start': `${item.startPercent}%`,
+                '--career-span': `${item.spanPercent}%`,
+                '--career-delay': `${index * 90}ms`,
+              }"
+            >
+              <span class="chronograph-duration">{{ item.durationLabel }}</span>
+              <span class="chronograph-band" aria-hidden="true">
+                <span class="chronograph-node chronograph-node-start"></span>
+                <span class="chronograph-node chronograph-node-end"></span>
+              </span>
+            </div>
+          </li>
+        </ol>
+      </div>
     </div>
   </section>
 </template>
