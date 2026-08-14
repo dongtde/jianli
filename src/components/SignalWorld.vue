@@ -392,7 +392,25 @@ function resize() {
   camera.updateProjectionMatrix()
 }
 
+function handleVisibilityChange() {
+  if (document.hidden) {
+    cancelAnimationFrame(animationFrame)
+    animationFrame = undefined
+    return
+  }
+
+  if (!animationFrame && renderer) {
+    clock?.getDelta()
+    animate()
+  }
+}
+
 function animate() {
+  if (document.hidden) {
+    animationFrame = undefined
+    return
+  }
+
   const delta = Math.min(clock.getDelta(), 0.033)
   const elapsed = clock.elapsedTime
   const ease = props.reducedMotion ? 1 : 1 - Math.pow(0.0008, delta)
@@ -437,11 +455,15 @@ function updateTarget(section) {
 
 watch(() => props.activeSection, updateTarget, { immediate: true })
 
-onMounted(init)
+onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  init()
+})
 
 onUnmounted(() => {
   cancelAnimationFrame(animationFrame)
   resizeObserver?.disconnect()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   scene?.traverse((object) => {
     if (object.geometry) object.geometry.dispose()
     if (object.material) {

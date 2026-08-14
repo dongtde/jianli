@@ -16,25 +16,77 @@ import {
   X,
 } from 'lucide-vue-next'
 import SignalWorld from './components/SignalWorld.vue'
+import avatarImage from './assets/img/avatar.png'
 import { experience, profile, projects, skillGroups } from './data/resume'
 
-const sections = ['home', 'route', 'twin', 'network', 'business', 'skills', 'about', 'contact']
+const sections = ['home', 'route', 'projects', 'skills', 'about', 'contact']
 const activeSection = ref('home')
+const selectedProjectId = ref(projects[0]?.id ?? 'twin')
 const menuOpen = ref(false)
 const soundOn = ref(false)
 const copied = ref(false)
 const reducedMotion = ref(false)
 const scrollProgress = ref(0)
+const revealedSections = ref(new Set(['home']))
+const scrollViewport = ref(null)
 
 const activeIndex = computed(() => Math.max(0, sections.indexOf(activeSection.value)))
 const activeLabel = computed(() => `${String(activeIndex.value + 1).padStart(2, '0')} / ${String(sections.length).padStart(2, '0')}`)
+const selectedProject = computed(() => projects.find((project) => project.id === selectedProjectId.value) ?? projects[0])
+const selectedProjectIndex = computed(() => Math.max(0, projects.findIndex((project) => project.id === selectedProjectId.value)))
+const projectSignalProgress = computed(() => `${projects.length > 1 ? (selectedProjectIndex.value / (projects.length - 1)) * 100 : 0}%`)
+const worldSection = computed(() => activeSection.value === 'projects' ? selectedProjectId.value : activeSection.value)
 
 let observer
+let wheelLocked = false
+let wheelDelta = 0
+let wheelUnlockTimer
+let wheelResetTimer
 
 function scrollToSection(id) {
   activeSection.value = id
   document.getElementById(id)?.scrollIntoView({ behavior: reducedMotion.value ? 'auto' : 'smooth' })
   menuOpen.value = false
+}
+
+function selectProject(id) {
+  selectedProjectId.value = id
+  activeSection.value = 'projects'
+}
+
+function moveToAdjacentSection(direction) {
+  const currentIndex = Math.max(0, sections.indexOf(activeSection.value))
+  const nextIndex = Math.min(sections.length - 1, Math.max(0, currentIndex + direction))
+  if (nextIndex !== currentIndex) scrollToSection(sections[nextIndex])
+}
+
+function handleWheel(event) {
+  if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+  const scrollablePanel = event.target instanceof Element
+    ? event.target.closest('.hero-layout, .section-content, .projects-layout')
+    : null
+  if (scrollablePanel && scrollablePanel.scrollHeight > scrollablePanel.clientHeight + 1) {
+    const atStart = scrollablePanel.scrollTop <= 1
+    const atEnd = scrollablePanel.scrollTop + scrollablePanel.clientHeight >= scrollablePanel.scrollHeight - 1
+    if ((event.deltaY < 0 && !atStart) || (event.deltaY > 0 && !atEnd)) return
+  }
+
+  event.preventDefault()
+  if (wheelLocked) return
+
+  wheelDelta += event.deltaY
+  window.clearTimeout(wheelResetTimer)
+  wheelResetTimer = window.setTimeout(() => {
+    wheelDelta = 0
+  }, 120)
+
+  if (Math.abs(wheelDelta) < 18) return
+  wheelLocked = true
+  moveToAdjacentSection(wheelDelta > 0 ? 1 : -1)
+  wheelDelta = 0
+  wheelUnlockTimer = window.setTimeout(() => {
+    wheelLocked = false
+  }, reducedMotion.value ? 120 : 760)
 }
 
 async function copyEmail() {
@@ -71,8 +123,10 @@ async function copyEmail() {
 }
 
 function handleScroll() {
-  const max = document.documentElement.scrollHeight - window.innerHeight
-  scrollProgress.value = max > 0 ? window.scrollY / max : 0
+  const viewport = scrollViewport.value
+  if (!viewport) return
+  const max = viewport.scrollHeight - viewport.clientHeight
+  scrollProgress.value = max > 0 ? viewport.scrollTop / max : 0
 }
 
 onMounted(() => {
@@ -84,8 +138,13 @@ onMounted(() => {
         .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
 
       if (visible) activeSection.value = visible.target.id
+      entries
+        .filter((entry) => entry.isIntersecting)
+        .forEach((entry) => {
+          revealedSections.value = new Set([...revealedSections.value, entry.target.id])
+        })
     },
-    { threshold: [0.35, 0.55, 0.75] },
+    { root: scrollViewport.value, threshold: [0.45, 0.62, 0.78] },
   )
 
   sections.forEach((id) => {
@@ -94,12 +153,16 @@ onMounted(() => {
   })
 
   handleScroll()
-  window.addEventListener('scroll', handleScroll, { passive: true })
+  scrollViewport.value?.addEventListener('scroll', handleScroll, { passive: true })
+  scrollViewport.value?.addEventListener('wheel', handleWheel, { passive: false })
 })
 
 onUnmounted(() => {
   observer?.disconnect()
-  window.removeEventListener('scroll', handleScroll)
+  scrollViewport.value?.removeEventListener('scroll', handleScroll)
+  scrollViewport.value?.removeEventListener('wheel', handleWheel)
+  window.clearTimeout(wheelUnlockTimer)
+  window.clearTimeout(wheelResetTimer)
 })
 </script>
 
@@ -108,7 +171,7 @@ onUnmounted(() => {
     <a class="skip-link" href="#home">跳到主要内容</a>
 
     <SignalWorld
-      :active-section="activeSection"
+      :active-section="worldSection"
       :scroll-progress="scrollProgress"
       :reduced-motion="reducedMotion"
     />
@@ -161,9 +224,7 @@ onUnmounted(() => {
         {{ {
           home: '身份场',
           route: '职业路线',
-          twin: '数字孪生',
-          network: '网络热力',
-          business: '业务系统',
+          projects: '代表项目',
           skills: '技能核心',
           about: '个人层',
           contact: '联系信标',
@@ -175,37 +236,51 @@ onUnmounted(() => {
       <span :style="{ transform: `scaleY(${scrollProgress})` }"></span>
     </div>
 
-    <main>
-      <section id="home" class="scene-section hero-section" aria-labelledby="home-title">
-        <div class="section-content hero-content">
-          <p class="eyebrow"><span>重庆</span> / WEB FRONTEND ENGINEER</p>
-          <h1 id="home-title">
-            <span class="name-line">陈友红</span>
-            <span class="role-line">空间可视化前端工程师</span>
-          </h1>
-          <p class="hero-statement">{{ profile.statement }}</p>
-          <div class="hero-actions">
-            <button class="command-button" @click="scrollToSection('twin')">
-              <MousePointer2 :size="18" />
-              进入代表项目
+    <main ref="scrollViewport" class="scroll-viewport">
+      <section id="home" class="scene-section hero-section is-visible" :class="{ active: activeSection === 'home' }" aria-labelledby="home-title">
+        <div class="hero-layout">
+          <div class="section-content hero-content">
+            <p class="eyebrow"><span>重庆</span> / WEB FRONTEND ENGINEER</p>
+            <h1 id="home-title">
+              <span class="name-line">陈友红</span>
+              <span class="role-line">空间可视化前端工程师</span>
+            </h1>
+            <p class="hero-statement">{{ profile.statement }}</p>
+            <div class="hero-actions">
+              <button class="command-button" @click="scrollToSection('projects')">
+                <MousePointer2 :size="18" />
+                进入代表项目
+              </button>
+              <a class="text-link" :href="`mailto:${profile.email}`">
+                联系我 <ArrowUpRight :size="16" />
+              </a>
+            </div>
+            <button class="scroll-cue" @click="scrollToSection('route')">
+              <ArrowDown :size="18" />
+              <span>沿数据道路前进</span>
             </button>
-            <a class="text-link" :href="`mailto:${profile.email}`">
-              联系我 <ArrowUpRight :size="16" />
-            </a>
           </div>
-          <button class="scroll-cue" @click="scrollToSection('route')">
-            <ArrowDown :size="18" />
-            <span>沿数据道路前进</span>
-          </button>
-        </div>
-        <div class="hero-meta" aria-label="能力概览">
-          <div><strong>04+</strong><span>年项目经验</span></div>
-          <div><strong>3D</strong><span>数字孪生</span></div>
-          <div><strong>LIVE</strong><span>实时数据</span></div>
+
+          <figure class="hero-portrait" aria-label="个人头像">
+            <div class="hero-portrait-image">
+              <img :src="avatarImage" alt="陈友红的头像" />
+            </div>
+            <figcaption>
+              <span>PROFILE / 2026</span>
+              <span>CHONGQING · CN</span>
+            </figcaption>
+            <div class="portrait-orbit" aria-hidden="true"><span></span></div>
+          </figure>
+
+          <div class="hero-signals" aria-label="能力概览">
+            <div><strong>04+</strong><span>年项目经验</span></div>
+            <div><strong>3D</strong><span>数字孪生</span></div>
+            <div><strong>LIVE</strong><span>实时数据</span></div>
+          </div>
         </div>
       </section>
 
-      <section id="route" class="scene-section route-section" aria-labelledby="route-title">
+      <section id="route" class="scene-section route-section" :class="{ 'is-visible': revealedSections.has('route'), active: activeSection === 'route' }" aria-labelledby="route-title">
         <div class="section-content narrow-content">
           <div class="section-heading">
             <p class="eyebrow"><BriefcaseBusiness :size="15" /> CAREER ROUTE</p>
@@ -224,30 +299,76 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section
-        v-for="project in projects"
-        :id="project.id"
-        :key="project.id"
-        class="scene-section project-section"
-        :class="`project-${project.id}`"
-        :aria-labelledby="`${project.id}-title`"
-      >
-        <div class="project-index" aria-hidden="true">{{ project.index }}</div>
-        <article class="section-content project-content">
-          <div class="section-heading">
-            <p class="eyebrow"><Map v-if="project.id !== 'business'" :size="15" /><Gauge v-else :size="15" /> {{ project.subtitle }}</p>
-            <time>{{ project.period }}</time>
-            <h2 :id="`${project.id}-title`">{{ project.title }}</h2>
+      <section id="projects" class="scene-section projects-section" :class="{ 'is-visible': revealedSections.has('projects'), active: activeSection === 'projects' }" aria-labelledby="projects-title">
+        <div class="projects-layout">
+          <header class="projects-intro">
+            <div>
+              <p class="eyebrow"><Map :size="15" /> SELECTED PROJECTS</p>
+              <h2 id="projects-title">沿一条信号轨道，<br />读取三个项目坐标。</h2>
+            </div>
+            <p class="projects-lead">每个坐标代表一次复杂系统的前端落地。选择信号点，项目内容与背景空间会同步切换。</p>
+          </header>
+
+          <div class="project-rail-shell" :style="{ '--signal-progress': projectSignalProgress }">
+            <div class="project-rail-meta">
+              <span>PROJECT COORDINATES</span>
+              <strong>{{ String(selectedProjectIndex + 1).padStart(2, '0') }} / {{ String(projects.length).padStart(2, '0') }}</strong>
+            </div>
+            <div class="project-rail" role="group" aria-label="选择代表项目">
+              <div class="project-rail-track" aria-hidden="true">
+                <span class="project-rail-progress"></span>
+                <span class="project-rail-signal"></span>
+              </div>
+              <button
+                v-for="(project, index) in projects"
+                :key="project.id"
+                type="button"
+                class="project-stop"
+                :class="{ active: selectedProjectId === project.id, passed: index <= selectedProjectIndex }"
+                :aria-pressed="selectedProjectId === project.id"
+                aria-controls="project-detail"
+                @click="selectProject(project.id)"
+              >
+                <span class="project-stop-node" aria-hidden="true"><span></span></span>
+                <span class="project-stop-index">{{ project.index }}</span>
+                <strong>{{ project.subtitle }}</strong>
+              </button>
+            </div>
           </div>
-          <p class="project-summary">{{ project.summary }}</p>
-          <p class="project-outcome">{{ project.outcome }}</p>
-          <ul class="tech-list" :aria-label="`${project.title} 技术栈`">
-            <li v-for="tech in project.stack" :key="tech">{{ tech }}</li>
-          </ul>
-        </article>
+
+          <Transition name="project-detail" mode="out-in">
+            <article
+              id="project-detail"
+              :key="selectedProject.id"
+              class="project-signal-detail"
+              role="region"
+              aria-live="polite"
+              :aria-label="`${selectedProject.title} 项目详情`"
+            >
+              <header class="project-signal-heading">
+                <p class="eyebrow"><Map v-if="selectedProject.id !== 'business'" :size="15" /><Gauge v-else :size="15" /> {{ selectedProject.subtitle }}</p>
+                <time>{{ selectedProject.period }}</time>
+                <h3>{{ selectedProject.title }}</h3>
+              </header>
+              <div class="project-signal-story">
+                <section>
+                  <span class="signal-story-label">CONTEXT / 01</span>
+                  <p>{{ selectedProject.summary }}</p>
+                </section>
+                <section>
+                  <span class="signal-story-label">OUTCOME / 02</span>
+                  <p>{{ selectedProject.outcome }}</p>
+                </section>
+              </div>
+              <ul class="tech-list" :aria-label="`${selectedProject.title} 技术栈`">
+                <li v-for="tech in selectedProject.stack" :key="tech">{{ tech }}</li>
+              </ul>
+            </article>
+          </Transition>
+        </div>
       </section>
 
-      <section id="skills" class="scene-section skills-section" aria-labelledby="skills-title">
+      <section id="skills" class="scene-section skills-section" :class="{ 'is-visible': revealedSections.has('skills'), active: activeSection === 'skills' }" aria-labelledby="skills-title">
         <div class="section-content skills-content">
           <div class="section-heading">
             <p class="eyebrow">CONNECTED CAPABILITIES</p>
@@ -265,7 +386,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section id="about" class="scene-section about-section" aria-labelledby="about-title">
+      <section id="about" class="scene-section about-section" :class="{ 'is-visible': revealedSections.has('about'), active: activeSection === 'about' }" aria-labelledby="about-title">
         <div class="section-content about-content">
           <div class="section-heading">
             <p class="eyebrow">HUMAN LAYER</p>
@@ -289,7 +410,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section id="contact" class="scene-section contact-section" aria-labelledby="contact-title">
+      <section id="contact" class="scene-section contact-section" :class="{ 'is-visible': revealedSections.has('contact'), active: activeSection === 'contact' }" aria-labelledby="contact-title">
         <div class="section-content contact-content">
           <p class="eyebrow"><span class="status-pulse"></span> AVAILABLE FOR CONNECTION</p>
           <h2 id="contact-title">下一段信号，<br />从一次联系开始。</h2>
