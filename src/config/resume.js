@@ -4,7 +4,7 @@
  */
 export const resumeSections = [
   { id: 'home', label: '身份场' },
-  { id: 'route', label: '职业路线' },
+  { id: 'route', label: '工作经验' },
   { id: 'projects', label: '代表项目' },
   { id: 'skills', label: '技能核心' },
   { id: 'about', label: '个人层' },

@@ -1,5 +1,39 @@
 import { computed, onMounted, onUnmounted, readonly, ref, unref } from 'vue'
 
+const SCROLLABLE_PANEL_SELECTOR = '.section-content, .projects-layout'
+const TOUCH_INTENT_THRESHOLD = 8
+const TOUCH_NAVIGATION_THRESHOLD = 48
+
+/**
+ * Checks whether a scrollable element can continue in the requested direction.
+ * @param {{ scrollTop: number, scrollHeight: number, clientHeight: number } | null} element - Scroll metrics source.
+ * @param {number} direction - Positive for down, negative for up.
+ * @returns {boolean} Whether the element should consume the gesture.
+ */
+export function canScrollElementInDirection(element, direction) {
+  if (!element || element.scrollHeight <= element.clientHeight + 1) return false
+
+  const atStart = element.scrollTop <= 1
+  const atEnd = element.scrollTop + element.clientHeight >= element.scrollHeight - 1
+  return (direction < 0 && !atStart) || (direction > 0 && !atEnd)
+}
+
+/**
+ * Resolves a dominant vertical swipe into a section direction.
+ * @param {{ x: number, y: number } | null} start - Gesture start point.
+ * @param {{ x: number, y: number } | null} end - Current or final gesture point.
+ * @param {number} minimumDistance - Required vertical travel in pixels.
+ * @returns {-1 | 0 | 1} Previous section, no swipe, or next section.
+ */
+export function getVerticalSwipeDirection(start, end, minimumDistance = TOUCH_NAVIGATION_THRESHOLD) {
+  if (!start || !end) return 0
+
+  const deltaX = start.x - end.x
+  const deltaY = start.y - end.y
+  if (Math.abs(deltaY) < minimumDistance || Math.abs(deltaY) <= Math.abs(deltaX)) return 0
+  return deltaY > 0 ? 1 : -1
+}
+
 /**
  * Coordinates full-page section navigation, scroll progress, and reveal state.
  * DOM observers and event listeners are created on mount and removed on unmount.
@@ -26,6 +60,12 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
   let wheelDelta = 0
   let wheelUnlockTimer
   let wheelResetTimer
+  let touchStartPoint = null
+  let touchTarget = null
+  let touchIntent = 'pending'
+  let touchDirection = 0
+  let touchLocked = false
+  let touchUnlockTimer
 
   const hasSection = (id) => orderedSections.value.includes(id)
 
@@ -48,28 +88,33 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
     document.getElementById(id)?.scrollIntoView({ behavior: unref(reducedMotion) ? 'auto' : 'smooth' })
   }
 
-  const moveToAdjacentSection = (direction) => {
+  const getAdjacentSectionId = (direction) => {
     const currentIndex = getCurrentIndex()
     const nextIndex = Math.min(orderedSections.value.length - 1, Math.max(0, currentIndex + direction))
-    if (nextIndex !== currentIndex) scrollToSection(orderedSections.value[nextIndex])
+    return nextIndex === currentIndex ? null : orderedSections.value[nextIndex]
   }
 
-  const canPanelConsumeWheel = (event) => {
-    const scrollablePanel = event.target instanceof Element
-      ? event.target.closest('.section-content, .projects-layout')
+  const moveToAdjacentSection = (direction) => {
+    const nextSectionId = getAdjacentSectionId(direction)
+    if (!nextSectionId) return false
+
+    scrollToSection(nextSectionId)
+    return true
+  }
+
+  const canPanelConsumeScroll = (target, direction) => {
+    const scrollablePanel = target instanceof Element
+      ? target.closest(SCROLLABLE_PANEL_SELECTOR)
       : null
-
-    if (!scrollablePanel || scrollablePanel.scrollHeight <= scrollablePanel.clientHeight + 1) {
-      return false
-    }
-
-    const atStart = scrollablePanel.scrollTop <= 1
-    const atEnd = scrollablePanel.scrollTop + scrollablePanel.clientHeight >= scrollablePanel.scrollHeight - 1
-    return (event.deltaY < 0 && !atStart) || (event.deltaY > 0 && !atEnd)
+    return canScrollElementInDirection(scrollablePanel, direction)
   }
 
   const handleWheel = (event) => {
-    if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || canPanelConsumeWheel(event)) return
+    if (
+      event.ctrlKey
+      || Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      || canPanelConsumeScroll(event.target, event.deltaY)
+    ) return
 
     event.preventDefault()
     if (wheelLocked) return
@@ -87,6 +132,76 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
     wheelDelta = 0
     wheelUnlockTimer = window.setTimeout(() => {
       wheelLocked = false
+    }, unref(reducedMotion) ? 120 : 760)
+  }
+
+  const resetTouchGesture = () => {
+    touchStartPoint = null
+    touchTarget = null
+    touchIntent = 'pending'
+    touchDirection = 0
+  }
+
+  const handleTouchStart = (event) => {
+    if (event.touches.length !== 1) {
+      resetTouchGesture()
+      return
+    }
+
+    const touch = event.touches[0]
+    touchStartPoint = { x: touch.clientX, y: touch.clientY }
+    touchTarget = event.target
+    touchIntent = 'pending'
+    touchDirection = 0
+  }
+
+  const handleTouchMove = (event) => {
+    if (!touchStartPoint || event.touches.length !== 1) return
+
+    const touch = event.touches[0]
+    const currentPoint = { x: touch.clientX, y: touch.clientY }
+
+    if (touchIntent === 'pending') {
+      const direction = getVerticalSwipeDirection(touchStartPoint, currentPoint, TOUCH_INTENT_THRESHOLD)
+      if (!direction) {
+        const horizontalDistance = Math.abs(touchStartPoint.x - currentPoint.x)
+        const verticalDistance = Math.abs(touchStartPoint.y - currentPoint.y)
+        if (horizontalDistance >= TOUCH_INTENT_THRESHOLD && horizontalDistance > verticalDistance) {
+          touchIntent = 'ignore'
+        }
+        return
+      }
+
+      touchDirection = direction
+      if (canPanelConsumeScroll(touchTarget, direction)) {
+        touchIntent = 'panel'
+        return
+      }
+
+      touchIntent = getAdjacentSectionId(direction) ? 'section' : 'ignore'
+    }
+
+    if (touchIntent === 'section') event.preventDefault()
+  }
+
+  const handleTouchEnd = (event) => {
+    if (!touchStartPoint) return
+
+    const touch = event.changedTouches[0]
+    const endPoint = touch ? { x: touch.clientX, y: touch.clientY } : null
+    const direction = getVerticalSwipeDirection(touchStartPoint, endPoint)
+    const panelCanConsume = direction ? canPanelConsumeScroll(touchTarget, direction) : false
+    const shouldNavigate = direction
+      && direction === (touchDirection || direction)
+      && (touchIntent === 'section' || (touchIntent === 'pending' && !panelCanConsume))
+
+    resetTouchGesture()
+    if (!shouldNavigate || touchLocked) return
+
+    touchLocked = true
+    moveToAdjacentSection(direction)
+    touchUnlockTimer = window.setTimeout(() => {
+      touchLocked = false
     }, unref(reducedMotion) ? 120 : 760)
   }
 
@@ -119,14 +234,23 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
     handleScroll()
     scrollViewport.value?.addEventListener('scroll', handleScroll, { passive: true })
     scrollViewport.value?.addEventListener('wheel', handleWheel, { passive: false })
+    scrollViewport.value?.addEventListener('touchstart', handleTouchStart, { passive: true })
+    scrollViewport.value?.addEventListener('touchmove', handleTouchMove, { passive: false })
+    scrollViewport.value?.addEventListener('touchend', handleTouchEnd, { passive: true })
+    scrollViewport.value?.addEventListener('touchcancel', resetTouchGesture, { passive: true })
   })
 
   onUnmounted(() => {
     observer?.disconnect()
     scrollViewport.value?.removeEventListener('scroll', handleScroll)
     scrollViewport.value?.removeEventListener('wheel', handleWheel)
+    scrollViewport.value?.removeEventListener('touchstart', handleTouchStart)
+    scrollViewport.value?.removeEventListener('touchmove', handleTouchMove)
+    scrollViewport.value?.removeEventListener('touchend', handleTouchEnd)
+    scrollViewport.value?.removeEventListener('touchcancel', resetTouchGesture)
     window.clearTimeout(wheelUnlockTimer)
     window.clearTimeout(wheelResetTimer)
+    window.clearTimeout(touchUnlockTimer)
   })
 
   return {
