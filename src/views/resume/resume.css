@@ -979,14 +979,6 @@ h1 {
   color: var(--lime);
 }
 
-.chronograph-empty {
-  display: flex;
-  align-items: center;
-  min-height: 160px;
-  justify-content: center;
-  color: var(--steel);
-}
-
 .projects-section {
   height: 100svh;
   min-height: 100svh;
@@ -1476,6 +1468,112 @@ h1 {
 @keyframes cursor-blink {
   50% {
     opacity: 0;
+  }
+}
+
+@media (max-height: 560px) and (min-width: 681px) {
+  .route-section {
+    padding-top: 82px;
+    padding-bottom: 18px;
+  }
+
+  .scene-section.route-section > .section-content.career-content {
+    max-height: calc(100vh - 52px);
+  }
+
+  .career-header {
+    padding-bottom: 12px;
+  }
+
+  .career-title-group .eyebrow {
+    margin-bottom: 7px;
+    font-size: 9px;
+  }
+
+  .career-title-group h2 {
+    font-size: 38px;
+  }
+
+  .career-range span,
+  .career-range strong {
+    font-size: 18px;
+  }
+
+  .career-summary {
+    gap: 4px;
+  }
+
+  .career-summary > p {
+    font-size: 8px;
+  }
+
+  .career-chronograph {
+    margin-top: 12px;
+  }
+
+  .career-chronograph::after {
+    top: 14px;
+  }
+
+  .chronograph-axis {
+    height: 20px;
+  }
+
+  .chronograph-tick,
+  .chronograph-axis > strong {
+    font-size: 8px;
+  }
+
+  .chronograph-tick::after {
+    top: 13px;
+    height: 6px;
+  }
+
+  .chronograph-row {
+    min-height: 58px;
+  }
+
+  .chronograph-copy {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .chronograph-meta {
+    gap: 7px;
+    margin-bottom: 2px;
+    font-size: 8px;
+  }
+
+  .chronograph-copy h3 {
+    margin-bottom: 2px;
+    font-size: 18px;
+  }
+
+  .chronograph-role {
+    font-size: 10px;
+  }
+
+  .chronograph-signal {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  .chronograph-track {
+    min-height: 42px;
+  }
+
+  .chronograph-track::before {
+    top: 28px;
+  }
+
+  .chronograph-duration {
+    top: 2px;
+    font-size: 8px;
+  }
+
+  .chronograph-band {
+    top: 24px;
+    height: 7px;
   }
 }
 
