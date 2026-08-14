@@ -1,8 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  ArrowDown,
-  ArrowUpRight,
   BriefcaseBusiness,
   Check,
   Copy,
@@ -10,7 +8,6 @@ import {
   Mail,
   Map,
   Menu,
-  MousePointer2,
   Volume2,
   VolumeX,
   X,
@@ -29,6 +26,14 @@ const reducedMotion = ref(false)
 const scrollProgress = ref(0)
 const revealedSections = ref(new Set(['home']))
 const scrollViewport = ref(null)
+const typedQuote = ref('')
+const quoteIndex = ref(0)
+
+const heroQuotes = [
+  '把复杂留给系统，把清晰交给用户。',
+  '保持好奇，也保持把事情做完的耐心。',
+  '每一次认真，都会在未来留下回声。',
+]
 
 const activeIndex = computed(() => Math.max(0, sections.indexOf(activeSection.value)))
 const activeLabel = computed(() => `${String(activeIndex.value + 1).padStart(2, '0')} / ${String(sections.length).padStart(2, '0')}`)
@@ -42,6 +47,7 @@ let wheelLocked = false
 let wheelDelta = 0
 let wheelUnlockTimer
 let wheelResetTimer
+let quoteTimer
 
 function scrollToSection(id) {
   activeSection.value = id
@@ -63,7 +69,7 @@ function moveToAdjacentSection(direction) {
 function handleWheel(event) {
   if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
   const scrollablePanel = event.target instanceof Element
-    ? event.target.closest('.hero-layout, .section-content, .projects-layout')
+    ? event.target.closest('.section-content, .projects-layout')
     : null
   if (scrollablePanel && scrollablePanel.scrollHeight > scrollablePanel.clientHeight + 1) {
     const atStart = scrollablePanel.scrollTop <= 1
@@ -129,8 +135,51 @@ function handleScroll() {
   scrollProgress.value = max > 0 ? viewport.scrollTop / max : 0
 }
 
+function startQuoteTyping() {
+  window.clearTimeout(quoteTimer)
+
+  if (reducedMotion.value) {
+    typedQuote.value = heroQuotes[0]
+    return
+  }
+
+  let characterIndex = 0
+  let deleting = false
+
+  const tick = () => {
+    const quote = heroQuotes[quoteIndex.value]
+
+    if (!deleting && characterIndex < quote.length) {
+      characterIndex += 1
+      typedQuote.value = quote.slice(0, characterIndex)
+      quoteTimer = window.setTimeout(tick, 92)
+      return
+    }
+
+    if (!deleting) {
+      deleting = true
+      quoteTimer = window.setTimeout(tick, 2200)
+      return
+    }
+
+    if (characterIndex > 0) {
+      characterIndex -= 1
+      typedQuote.value = quote.slice(0, characterIndex)
+      quoteTimer = window.setTimeout(tick, 42)
+      return
+    }
+
+    deleting = false
+    quoteIndex.value = (quoteIndex.value + 1) % heroQuotes.length
+    quoteTimer = window.setTimeout(tick, 420)
+  }
+
+  quoteTimer = window.setTimeout(tick, 520)
+}
+
 onMounted(() => {
   reducedMotion.value = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  startQuoteTyping()
   observer = new IntersectionObserver(
     (entries) => {
       const visible = entries
@@ -163,11 +212,12 @@ onUnmounted(() => {
   scrollViewport.value?.removeEventListener('wheel', handleWheel)
   window.clearTimeout(wheelUnlockTimer)
   window.clearTimeout(wheelResetTimer)
+  window.clearTimeout(quoteTimer)
 })
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'home-active': activeSection === 'home' }">
     <a class="skip-link" href="#home">跳到主要内容</a>
 
     <SignalWorld
@@ -238,45 +288,40 @@ onUnmounted(() => {
 
     <main ref="scrollViewport" class="scroll-viewport">
       <section id="home" class="scene-section hero-section is-visible" :class="{ active: activeSection === 'home' }" aria-labelledby="home-title">
-        <div class="hero-layout">
-          <div class="section-content hero-content">
-            <p class="eyebrow"><span>重庆</span> / WEB FRONTEND ENGINEER</p>
-            <h1 id="home-title">
-              <span class="name-line">陈友红</span>
-              <span class="role-line">空间可视化前端工程师</span>
-            </h1>
-            <p class="hero-statement">{{ profile.statement }}</p>
-            <div class="hero-actions">
-              <button class="command-button" @click="scrollToSection('projects')">
-                <MousePointer2 :size="18" />
-                进入代表项目
-              </button>
-              <a class="text-link" :href="`mailto:${profile.email}`">
-                联系我 <ArrowUpRight :size="16" />
-              </a>
-            </div>
-            <button class="scroll-cue" @click="scrollToSection('route')">
-              <ArrowDown :size="18" />
-              <span>沿数据道路前进</span>
-            </button>
-          </div>
-
-          <figure class="hero-portrait" aria-label="个人头像">
-            <div class="hero-portrait-image">
+        <div class="hero-landing">
+          <figure class="hero-avatar" aria-label="个人头像">
+            <span class="avatar-orbit" aria-hidden="true"><i></i></span>
+            <div class="hero-avatar-frame">
               <img :src="avatarImage" alt="陈友红的头像" />
             </div>
-            <figcaption>
-              <span>PROFILE / 2026</span>
-              <span>CHONGQING · CN</span>
-            </figcaption>
-            <div class="portrait-orbit" aria-hidden="true"><span></span></div>
           </figure>
 
-          <div class="hero-signals" aria-label="能力概览">
-            <div><strong>04+</strong><span>年项目经验</span></div>
-            <div><strong>3D</strong><span>数字孪生</span></div>
-            <div><strong>LIVE</strong><span>实时数据</span></div>
+          <div class="hero-identity">
+            <p class="hero-kicker">HELLO, I'M</p>
+            <h1 id="home-title">{{ profile.name }}</h1>
+            <p class="hero-role">一个做空间可视化的前端</p>
           </div>
+
+          <p class="hero-quote" :aria-label="typedQuote || heroQuotes[0]">
+            <span class="quote-mark" aria-hidden="true">“</span>
+            <span aria-hidden="true">{{ typedQuote }}</span>
+            <span class="type-cursor" aria-hidden="true"></span>
+          </p>
+
+          <nav class="hero-shortcuts" aria-label="首页快速入口">
+            <button type="button" title="查看代表项目" @click="scrollToSection('projects')">
+              <Map :size="20" />
+              <span>项目</span>
+            </button>
+            <button type="button" title="查看职业经历" @click="scrollToSection('route')">
+              <BriefcaseBusiness :size="20" />
+              <span>经历</span>
+            </button>
+            <a :href="`mailto:${profile.email}`" title="发送邮件">
+              <Mail :size="20" />
+              <span>邮箱</span>
+            </a>
+          </nav>
         </div>
       </section>
 
