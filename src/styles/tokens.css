@@ -1,0 +1,18 @@
+:root {
+  color-scheme: dark;
+  font-family: "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  --carbon: #071014;
+  --carbon-soft: #0d191d;
+  --mist: #e8eff0;
+  --mist-muted: #a8b7b9;
+  --teal: #32d6c5;
+  --lime: #d8f24a;
+  --coral: #ff6b5f;
+  --steel: #65717c;
+  --line: rgba(232, 239, 240, 0.18);
+  --surface: rgba(7, 16, 20, 0.58);
+  --surface-strong: rgba(7, 16, 20, 0.8);
+  --motion-enter: 680ms;
+  --edge: clamp(20px, 4.6vw, 76px);
+}

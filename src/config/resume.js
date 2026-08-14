@@ -1,3 +1,41 @@
+/**
+ * Ordered section metadata used by the scroll navigation and status rail.
+ * @type {{id: string, label: string}[]}
+ */
+export const resumeSections = [
+  { id: 'home', label: '身份场' },
+  { id: 'route', label: '职业路线' },
+  { id: 'projects', label: '代表项目' },
+  { id: 'skills', label: '技能核心' },
+  { id: 'about', label: '个人层' },
+  { id: 'contact', label: '联系信标' },
+]
+
+/**
+ * Hero typewriter copy. It is static config and has no side effects.
+ * @type {string[]}
+ */
+export const heroQuotes = [
+  '把复杂留给系统，把清晰交给用户。',
+  '保持好奇，也保持把事情做完的耐心。',
+  '每一次认真，都会在未来留下回声。',
+]
+
+/**
+ * Personal working principles displayed in the about section.
+ * @type {string[]}
+ */
+export const principles = [
+  '重视责任与团队协作',
+  '持续学习并复盘实现',
+  '合理安排时间与交付节奏',
+  '让复杂信息保持可理解',
+]
+
+/**
+ * Core profile data rendered across the resume view.
+ * @type {{name: string, role: string, intent: string, location: string, education: string, period: string, email: string, statement: string}}
+ */
 export const profile = {
   name: '陈友红',
   role: '空间可视化前端工程师',
@@ -9,6 +47,10 @@ export const profile = {
   statement: '把复杂业务，构造成可看、可懂、可操作的空间。',
 }
 
+/**
+ * Work history entries displayed in the career route section.
+ * @type {{period: string, company: string, role: string, signal: string}[]}
+ */
 export const experience = [
   {
     period: '2024.10 - 至今',
@@ -30,6 +72,10 @@ export const experience = [
   },
 ]
 
+/**
+ * Selected project summaries rendered by the project coordinate control.
+ * @type {{id: string, index: string, title: string, subtitle: string, period: string, summary: string, outcome: string, stack: string[]}[]}
+ */
 export const projects = [
   {
     id: 'twin',
@@ -69,6 +115,10 @@ export const projects = [
   },
 ]
 
+/**
+ * Skill groups displayed as connected capability columns.
+ * @type {{name: string, skills: string[]}[]}
+ */
 export const skillGroups = [
   {
     name: 'Application',

@@ -41,3 +41,5 @@ Desktop.ini
 .cache/
 .vite/
 *.md
+!AGENTS.md
+!AGENTS.override.md

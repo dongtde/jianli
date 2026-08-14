@@ -1,0 +1,139 @@
+<script setup>
+import { computed, ref } from 'vue'
+import SignalWorld from '../components/SignalWorld.vue'
+import SiteHeader from '../components/SiteHeader.vue'
+import SiteMenu from '../components/SiteMenu.vue'
+import HeroSection from '../components/HeroSection.vue'
+import CareerSection from '../components/CareerSection.vue'
+import ProjectsSection from '../components/ProjectsSection.vue'
+import SkillsSection from '../components/SkillsSection.vue'
+import AboutSection from '../components/AboutSection.vue'
+import ContactSection from '../components/ContactSection.vue'
+import avatarImage from '../assets/img/avatar.png'
+import { experience, heroQuotes, principles, profile, projects, resumeSections, skillGroups } from '../config/resume'
+import { useClipboard } from '../composables/useClipboard'
+import { useReducedMotion } from '../composables/useReducedMotion'
+import { useSectionNavigation } from '../composables/useSectionNavigation'
+import { useTypewriter } from '../composables/useTypewriter'
+import { formatCounter } from '../utils/format'
+import './resume/resume.css'
+
+const sectionIds = resumeSections.map((section) => section.id)
+const selectedProjectId = ref(projects[0]?.id ?? 'twin')
+const menuOpen = ref(false)
+const soundOn = ref(false)
+
+const { reducedMotion } = useReducedMotion()
+const {
+  activeSection,
+  activateSection,
+  revealedSections,
+  scrollProgress,
+  scrollToSection,
+  scrollViewport,
+} = useSectionNavigation(sectionIds, reducedMotion)
+const { typedText: typedQuote } = useTypewriter(heroQuotes, reducedMotion)
+const { copied, copyText } = useClipboard()
+
+const activeIndex = computed(() => Math.max(0, sectionIds.indexOf(activeSection.value)))
+const activeLabel = computed(() => formatCounter(activeIndex.value + 1, sectionIds.length))
+const selectedProject = computed(() => projects.find((project) => project.id === selectedProjectId.value) ?? projects[0])
+const selectedProjectIndex = computed(() => Math.max(0, projects.findIndex((project) => project.id === selectedProjectId.value)))
+const projectSignalProgress = computed(() => `${projects.length > 1 ? (selectedProjectIndex.value / (projects.length - 1)) * 100 : 0}%`)
+const worldSection = computed(() => activeSection.value === 'projects' ? selectedProjectId.value : activeSection.value)
+
+const navigateToSection = (id) => {
+  scrollToSection(id)
+  menuOpen.value = false
+}
+
+const selectProject = (id) => {
+  selectedProjectId.value = id
+  activateSection('projects')
+}
+
+const copyEmail = () => {
+  copyText(profile.email)
+}
+</script>
+
+<template>
+  <div class="app-shell" :class="{ 'home-active': activeSection === 'home' }">
+    <a class="skip-link" href="#home">跳到主要内容</a>
+
+    <SignalWorld
+      :active-section="worldSection"
+      :scroll-progress="scrollProgress"
+      :reduced-motion="reducedMotion"
+    />
+
+    <SiteHeader
+      :active-label="activeLabel"
+      :sound-on="soundOn"
+      :menu-open="menuOpen"
+      @navigate="navigateToSection"
+      @toggle-sound="soundOn = !soundOn"
+      @toggle-menu="menuOpen = !menuOpen"
+    />
+
+    <SiteMenu
+      :sections="resumeSections"
+      :active-section="activeSection"
+      :open="menuOpen"
+      @navigate="navigateToSection"
+    />
+
+    <div class="progress-rail" aria-hidden="true">
+      <span :style="{ transform: `scaleY(${scrollProgress})` }"></span>
+    </div>
+
+    <main ref="scrollViewport" class="scroll-viewport">
+      <HeroSection
+        :active="activeSection === 'home'"
+        :profile="profile"
+        :typed-quote="typedQuote"
+        :hero-quotes="heroQuotes"
+        :avatar-image="avatarImage"
+        @navigate="navigateToSection"
+      />
+
+      <CareerSection
+        :active="activeSection === 'route'"
+        :visible="revealedSections.has('route')"
+        :experience="experience"
+      />
+
+      <ProjectsSection
+        :active="activeSection === 'projects'"
+        :visible="revealedSections.has('projects')"
+        :projects="projects"
+        :selected-project="selectedProject"
+        :selected-project-id="selectedProjectId"
+        :selected-project-index="selectedProjectIndex"
+        :project-signal-progress="projectSignalProgress"
+        @select-project="selectProject"
+      />
+
+      <SkillsSection
+        :active="activeSection === 'skills'"
+        :visible="revealedSections.has('skills')"
+        :skill-groups="skillGroups"
+      />
+
+      <AboutSection
+        :active="activeSection === 'about'"
+        :visible="revealedSections.has('about')"
+        :profile="profile"
+        :principles="principles"
+      />
+
+      <ContactSection
+        :active="activeSection === 'contact'"
+        :visible="revealedSections.has('contact')"
+        :profile="profile"
+        :copied="copied"
+        @copy-email="copyEmail"
+      />
+    </main>
+  </div>
+</template>
