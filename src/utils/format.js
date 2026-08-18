@@ -7,3 +7,13 @@
 export function formatCounter(current, total) {
   return `${String(current).padStart(2, '0')} / ${String(total).padStart(2, '0')}`
 }
+
+/**
+ * Converts a `YYYY.MM` month label into the `YYYY-MM` form the `datetime` attribute expects.
+ * @param {string} label - Month label such as "2024.10".
+ * @returns {string} ISO month string, or an empty string when the label is not a month.
+ */
+export function toIsoMonth(label) {
+  const match = String(label ?? '').match(/^(\d{4})\.(\d{2})$/)
+  return match ? `${match[1]}-${match[2]}` : ''
+}

@@ -1,9 +1,15 @@
 <script setup>
-import { computed, onUnmounted, ref, watch } from 'vue'
-import { buildCareerTimeline, formatMonthOffset } from '../utils/timeline'
-import { getHorizontalSwipeDirection } from '../utils/swipe'
-import { clampOffset, findNearestStopIndex, projectScrubOffset } from '../utils/scrub'
-import { useDragScrub } from '../composables/useDragScrub'
+import { computed, watch } from 'vue'
+import { buildCareerTimeline } from '../utils/timeline'
+import { buildCareerChart } from '../utils/careerChart'
+import { toIsoMonth } from '../utils/format'
+import { useMediaQuery } from '../composables/useMediaQuery'
+import { useRovingList } from '../composables/useRovingList'
+
+/** Past this many roles the always-open score stops fitting one screen, so rows fold again. */
+const SCORE_ROW_LIMIT = 5
+/** Narrow or short viewports cannot hold every role's detail either, whatever the role count is. */
+const COMPACT_VIEWPORT = '(max-width: 680px), (max-height: 620px)'
 
 const props = defineProps({
   active: { type: Boolean, default: false },
@@ -13,101 +19,32 @@ const props = defineProps({
 
 const emit = defineEmits(['focus-change'])
 
-const careerTimeline = computed(() => buildCareerTimeline(props.experience))
+const timeline = computed(() => buildCareerTimeline(props.experience))
+const chart = computed(() => buildCareerChart(timeline.value))
+const rows = computed(() => chart.value.rows)
 
-const getInitialIndex = (entries) => {
-  const currentIndex = entries.findIndex((item) => item.current)
-  return currentIndex >= 0 ? currentIndex : Math.max(0, entries.length - 1)
-}
+const compactViewport = useMediaQuery(COMPACT_VIEWPORT)
 
-const viewportRef = ref(null)
-const trackRef = ref(null)
-const selectedIndex = ref(getInitialIndex(careerTimeline.value.entries))
-const headOverride = ref(null)
-const dragPixels = ref(0)
-const monthWidth = ref(0)
-const viewportWidth = ref(0)
-const cardTouchStart = ref(null)
+/**
+ * Score mode keeps every role's detail on screen so the chart fills the section; folded mode is the
+ * disclosure fallback for long histories and small viewports. The flag drives markup as well as
+ * styling, so `inert` and `aria-hidden` never disagree with what is actually painted.
+ */
+const folded = computed(() => compactViewport.value || rows.value.length > SCORE_ROW_LIMIT)
 
-let clickSuppressed = false
-let sizeObserver
+// Rows read newest first, so row 0 is always the role a visitor should land on.
+const { activeIndex, select, step, jumpTo, setItemRef } = useRovingList(() => rows.value.length)
 
-const entries = computed(() => careerTimeline.value.entries)
-const axisMonthCount = computed(() => careerTimeline.value.axisMonthCount)
-const stopOffsets = computed(() => entries.value.map((item) => item.focusMonthOffset))
+const openRow = computed(() => rows.value[activeIndex.value] ?? null)
 
-const selectedEntry = computed(() => (
-  entries.value[selectedIndex.value] ?? entries.value[entries.value.length - 1] ?? null
-))
-
-/** Year ticks carry percentages for the overview strip, so derive their month offsets for the river. */
-const riverYears = computed(() => careerTimeline.value.ticks.map((tick) => ({
-  ...tick,
-  monthOffset: Math.round((tick.position / 100) * axisMonthCount.value),
-})))
-
-const baseHead = computed(() => headOverride.value ?? selectedEntry.value?.focusMonthOffset ?? 0)
-
-const dragMonths = computed(() => (monthWidth.value > 0 ? dragPixels.value / monthWidth.value : 0))
-
-const displayHead = computed(() => clampOffset(baseHead.value - dragMonths.value, 0, axisMonthCount.value))
-
-const readingLabel = computed(() => formatMonthOffset(careerTimeline.value.axisStartYear, displayHead.value))
-
-const visibleMonths = computed(() => (monthWidth.value > 0 ? viewportWidth.value / monthWidth.value : 0))
-
-const trackStyle = computed(() => ({
-  '--river-total': axisMonthCount.value,
-  '--river-focus': displayHead.value,
-}))
-
-/** The overview window is the visible river slice intersected with the axis, so it never overhangs. */
-const overviewStyle = computed(() => {
-  const total = Math.max(1, axisMonthCount.value)
-  const halfSpan = (visibleMonths.value / total) * 50
-  const center = (displayHead.value / total) * 100
-  const start = clampOffset(center - halfSpan, 0, 100)
-  const end = clampOffset(center + halfSpan, 0, 100)
-
-  return {
-    '--window-start': `${start}%`,
-    '--window-span': `${end - start}%`,
-  }
-})
-
-const measure = () => {
-  const trackWidth = trackRef.value?.getBoundingClientRect().width ?? 0
-  monthWidth.value = axisMonthCount.value > 0 ? trackWidth / axisMonthCount.value : 0
-  viewportWidth.value = viewportRef.value?.getBoundingClientRect().width ?? 0
-}
-
-const selectEntry = (index) => {
-  const lastIndex = entries.value.length - 1
-  headOverride.value = null
-  if (lastIndex < 0) {
-    selectedIndex.value = 0
-    return
-  }
-  selectedIndex.value = Math.min(lastIndex, Math.max(0, index))
-}
-
-const moveSelection = (direction) => {
-  selectEntry(selectedIndex.value + direction)
-}
-
-/** Nudges the reading head one month and re-snaps the selection, so the keyboard can scrub too. */
-const nudgeHead = (direction) => {
-  headOverride.value = clampOffset(displayHead.value + direction, 0, axisMonthCount.value)
-  const nearestIndex = findNearestStopIndex(headOverride.value, stopOffsets.value)
-  if (nearestIndex >= 0) selectedIndex.value = nearestIndex
-}
+const isDetailVisible = (index) => !folded.value || index === activeIndex.value
 
 const handleKeydown = (event) => {
   const keyActions = {
-    ArrowLeft: () => (event.shiftKey ? nudgeHead(-1) : moveSelection(-1)),
-    ArrowRight: () => (event.shiftKey ? nudgeHead(1) : moveSelection(1)),
-    Home: () => selectEntry(0),
-    End: () => selectEntry(entries.value.length - 1),
+    ArrowUp: () => step(-1),
+    ArrowDown: () => step(1),
+    Home: () => jumpTo(0),
+    End: () => jumpTo(rows.value.length - 1),
   }
 
   const action = keyActions[event.key]
@@ -117,801 +54,747 @@ const handleKeydown = (event) => {
   action()
 }
 
-const handleReachClick = (index) => {
-  if (clickSuppressed) return
-  selectEntry(index)
-}
-
-const handleOverviewClick = (event) => {
-  const rect = event.currentTarget.getBoundingClientRect()
-  if (!rect.width) return
-
-  const offset = ((event.clientX - rect.left) / rect.width) * axisMonthCount.value
-  const nearestIndex = findNearestStopIndex(offset, stopOffsets.value)
-  if (nearestIndex >= 0) selectEntry(nearestIndex)
-}
-
-const handleCardTouchStart = (event) => {
-  const touch = event.touches[0]
-  cardTouchStart.value = touch ? { x: touch.clientX, y: touch.clientY } : null
-}
-
-const handleCardTouchEnd = (event) => {
-  if (!cardTouchStart.value) return
-
-  const touch = event.changedTouches[0]
-  const endPoint = touch ? { x: touch.clientX, y: touch.clientY } : null
-  const direction = getHorizontalSwipeDirection(cardTouchStart.value, endPoint)
-  cardTouchStart.value = null
-
-  if (direction) moveSelection(direction)
-}
-
-const { dragging } = useDragScrub(viewportRef, {
-  onDrag: (deltaPixels) => {
-    dragPixels.value = deltaPixels
-  },
-  onRelease: ({ deltaPixels, velocityPixelsPerSecond }) => {
-    const width = monthWidth.value
-    const releasedHead = clampOffset(baseHead.value - (width > 0 ? deltaPixels / width : 0), 0, axisMonthCount.value)
-    const velocityMonths = width > 0 ? -velocityPixelsPerSecond / width : 0
-    const projected = projectScrubOffset(releasedHead, velocityMonths)
-    const nearestIndex = findNearestStopIndex(projected, stopOffsets.value)
-
-    dragPixels.value = 0
-    clickSuppressed = true
-    if (nearestIndex >= 0) selectEntry(nearestIndex)
-  },
-})
-
-/** A drag that ends on a reach must not also activate it; the next press clears the guard. */
-const handlePointerDown = () => {
-  clickSuppressed = false
-}
-
-watch([trackRef, viewportRef], () => {
-  sizeObserver?.disconnect()
-  if (!trackRef.value && !viewportRef.value) return
-
-  sizeObserver = new ResizeObserver(measure)
-  if (trackRef.value) sizeObserver.observe(trackRef.value)
-  if (viewportRef.value) sizeObserver.observe(viewportRef.value)
-  measure()
-}, { immediate: true, flush: 'post' })
-
+/** The 3D corridor camera tracks the open role, so it needs the chronological axis position. */
 watch(
-  () => entries.value.length,
-  (length) => {
-    headOverride.value = null
-    selectedIndex.value = Math.min(selectedIndex.value, Math.max(0, length - 1))
-  },
-)
-
-watch(
-  [displayHead, selectedIndex],
-  ([head, index]) => {
+  openRow,
+  (row) => {
+    const axisMonthCount = timeline.value.axisMonthCount
     emit('focus-change', {
-      progress: axisMonthCount.value > 0 ? head / axisMonthCount.value : 0,
-      index,
+      progress: row && axisMonthCount > 0 ? row.entry.focusMonthOffset / axisMonthCount : 0,
+      index: row?.chronologicalIndex ?? 0,
     })
   },
   { immediate: true },
 )
-
-onUnmounted(() => {
-  sizeObserver?.disconnect()
-})
 </script>
 
 <template>
-  <section id="route" class="scene-section route-section" :class="{ 'is-visible': visible, active }" aria-labelledby="route-title">
+  <section
+    id="route"
+    class="scene-section route-section"
+    :class="{ 'is-visible': visible, active }"
+    aria-labelledby="route-title"
+  >
     <div class="section-content career-content">
       <h2 id="route-title" class="sr-only">工作经验</h2>
 
-      <div
-        v-if="selectedEntry"
-        class="time-river"
-        :class="{ 'is-dragging': dragging }"
-        tabindex="0"
-        role="group"
-        aria-roledescription="时间河流"
-        :aria-label="`第 ${selectedIndex + 1} 段，共 ${entries.length} 段工作经历，左右方向键穿越时间，按住 Shift 逐月擦洗`"
-        @keydown="handleKeydown"
-      >
-        <div ref="viewportRef" class="river-viewport" @pointerdown="handlePointerDown">
-          <div class="river-current" aria-hidden="true"></div>
-
-          <div ref="trackRef" class="river-track" :style="trackStyle">
+      <div v-if="rows.length" class="career-chart">
+        <div class="career-axis">
+          <span class="axis-caption">{{ timeline.startLabel }} → NOW</span>
+          <div class="axis-scale" aria-hidden="true">
             <span
-              v-for="year in riverYears"
-              :key="`year-${year.label}`"
-              class="river-year"
-              :style="{ '--river-at': year.monthOffset }"
-              aria-hidden="true"
-            >{{ year.label }}</span>
-
-            <span
-              v-for="gap in careerTimeline.gaps"
-              :key="gap.key"
-              class="river-shallow"
-              :style="{ '--river-at': gap.startMonthOffset, '--river-span': gap.months }"
-              aria-hidden="true"
-            >
-              <i>空档 {{ gap.label }}</i>
-            </span>
-
-            <button
-              v-for="(item, index) in entries"
-              :key="`${item.company}-${item.period}`"
-              type="button"
-              class="river-reach"
-              :class="{ selected: index === selectedIndex, current: item.current }"
-              :style="{ '--river-at': item.startMonthOffset, '--river-span': item.durationMonths }"
-              :aria-label="`第 ${item.sequence} 段，${item.company}，${item.period}，${item.durationLabel}`"
-              :aria-pressed="index === selectedIndex"
-              :title="`${item.company} · ${item.period} · ${item.durationLabel}`"
-              @click="handleReachClick(index)"
-            >
-              <b>{{ item.company }}</b>
-              <i>{{ item.durationLabel }}</i>
-            </button>
-
-            <span
-              class="river-now"
-              :style="{ '--river-at': careerTimeline.nowMonthOffset }"
-              aria-hidden="true"
-            >NOW</span>
+              v-for="tick in chart.ticks"
+              :key="`tick-${tick.label}`"
+              class="axis-tick"
+              :class="{ 'is-labelled': tick.labelled }"
+              :style="{ '--tick-at': `${tick.position}%` }"
+            ><i>{{ tick.label }}</i></span>
           </div>
-
-          <div class="river-reticle" aria-hidden="true">
-            <span>{{ readingLabel }}</span>
-          </div>
-
-          <div class="river-fog" aria-hidden="true"></div>
         </div>
 
-        <dl class="river-readout" aria-live="polite">
-          <div>
-            <dt>已持续</dt>
-            <dd>{{ selectedEntry.durationLabel }}</dd>
+        <div class="career-plot">
+          <div class="career-gridlines" aria-hidden="true">
+            <i
+              v-for="tick in chart.ticks"
+              :key="`gridline-${tick.label}`"
+              :class="{ 'is-labelled': tick.labelled }"
+              :style="{ '--tick-at': `${tick.position}%` }"
+            ></i>
+            <b class="gridline-now" :style="{ '--tick-at': `${chart.nowPercent}%` }"><em>NOW</em></b>
           </div>
-          <div>
-            <dt>距今</dt>
-            <dd>{{ selectedEntry.sinceLabel }}</dd>
-          </div>
-          <div>
-            <dt>空档期</dt>
-            <dd>{{ careerTimeline.gapLabel }}<small v-if="careerTimeline.gaps.length"> · {{ careerTimeline.gaps.length }} 段</small></dd>
-          </div>
-          <div>
-            <dt>职业跨度</dt>
-            <dd>{{ careerTimeline.careerSpanLabel }}<small> · 在职 {{ careerTimeline.totalDurationLabel }}</small></dd>
-          </div>
-        </dl>
 
-        <Transition name="river-record" mode="out-in">
-          <article
-            :key="`${selectedEntry.company}-${selectedEntry.period}`"
-            class="river-record"
-            @touchstart.passive="handleCardTouchStart"
-            @touchend.passive="handleCardTouchEnd"
-            @touchcancel="cardTouchStart = null"
-          >
-            <div class="river-record-heading">
-              <h3>{{ selectedEntry.company }}</h3>
-              <div class="river-record-meta">
-                <div class="river-period">
-                  <time :datetime="selectedEntry.startLabel.replace('.', '-')">{{ selectedEntry.startLabel }}</time>
-                  <span aria-hidden="true">→</span>
-                  <strong>{{ selectedEntry.endLabel }}</strong>
+          <ol class="career-tracks" :class="{ 'is-folded': folded }" @keydown="handleKeydown">
+            <li
+              v-for="(row, index) in rows"
+              :key="row.key"
+              class="career-row"
+              :class="{ 'is-open': index === activeIndex, 'is-current': row.entry.current }"
+              :style="{ '--row-index': index }"
+            >
+              <button
+                :id="`career-track-${row.chronologicalIndex}`"
+                :ref="(element) => setItemRef(index, element)"
+                type="button"
+                class="career-track"
+                :aria-expanded="folded ? index === activeIndex : undefined"
+                :aria-controls="folded ? `career-panel-${row.chronologicalIndex}` : undefined"
+                :aria-current="!folded && index === activeIndex ? 'true' : undefined"
+                :aria-label="`${row.entry.company}，${row.entry.role}，${row.entry.period}，共 ${row.entry.durationLabel}`"
+                :title="`${row.entry.company} · ${row.entry.role} · ${row.entry.period}`"
+                @click="select(index)"
+              >
+                <span class="track-label">
+                  <span class="track-name">
+                    <span class="name-company">
+                      <span class="company-text">{{ row.entry.company }}</span>
+                      <span v-if="row.entry.current" class="company-flag">CURRENT</span>
+                    </span>
+                    <span class="name-meta">
+                      <span class="meta-role">{{ row.entry.role }}</span>
+                      <span class="meta-span">{{ row.entry.durationLabel }}</span>
+                    </span>
+                  </span>
+                </span>
+
+                <span class="track-lane">
+                  <span
+                    class="track-bar"
+                    :style="{
+                      '--bar-start': `${row.entry.startPercent}%`,
+                      '--bar-span': `${row.entry.spanPercent}%`,
+                    }"
+                  ></span>
+                </span>
+              </button>
+
+              <div
+                :id="`career-panel-${row.chronologicalIndex}`"
+                class="career-panel"
+                role="region"
+                :aria-labelledby="`career-track-${row.chronologicalIndex}`"
+                :aria-hidden="isDetailVisible(index) ? undefined : 'true'"
+                :inert="!isDetailVisible(index)"
+              >
+                <div class="panel-clip">
+                  <div class="panel-body">
+                    <div class="panel-meta">
+                      <p class="panel-period">
+                        <time :datetime="toIsoMonth(row.entry.startLabel)">{{ row.entry.startLabel }}</time>
+                        <span aria-hidden="true">↓</span>
+                        <strong v-if="row.entry.current">NOW</strong>
+                        <time v-else :datetime="toIsoMonth(row.entry.endLabel)">{{ row.entry.endLabel }}</time>
+                      </p>
+                      <p v-if="!row.entry.current" class="panel-since">距今 {{ row.entry.sinceLabel }}</p>
+                    </div>
+
+                    <ul v-if="row.tags.length" class="panel-tags">
+                      <li v-for="tag in row.tags" :key="tag">{{ tag }}</li>
+                    </ul>
+
+                    <ul class="panel-highlights">
+                      <li
+                        v-for="(highlight, itemIndex) in row.entry.highlights"
+                        :key="highlight"
+                        :style="{ '--item-index': itemIndex }"
+                      >{{ highlight }}</li>
+                    </ul>
+                  </div>
                 </div>
-                <strong v-if="selectedEntry.current">CURRENT</strong>
               </div>
-              <p>{{ selectedEntry.signal }}</p>
-            </div>
-
-            <section class="river-responsibility" :aria-labelledby="`career-role-${selectedEntry.sequence}`">
-              <h4 :id="`career-role-${selectedEntry.sequence}`">{{ selectedEntry.role }}</h4>
-              <ul>
-                <li v-for="highlight in selectedEntry.highlights" :key="highlight">{{ highlight }}</li>
-              </ul>
-            </section>
-          </article>
-        </Transition>
-
-        <div class="river-overview" aria-hidden="true">
-          <div class="river-overview-meta">
-            <span>{{ careerTimeline.startLabel }} → NOW</span>
-            <strong>{{ entries.length }} COMPANIES</strong>
-          </div>
-
-          <div class="river-overview-axis" :style="overviewStyle" @click="handleOverviewClick">
-            <span
-              v-for="tick in careerTimeline.ticks"
-              :key="`overview-${tick.label}`"
-              class="river-overview-year"
-              :style="{ '--tick-position': `${tick.position}%` }"
-            >{{ tick.label }}</span>
-
-            <span
-              v-for="gap in careerTimeline.gaps"
-              :key="`overview-${gap.key}`"
-              class="river-overview-gap"
-              :style="{ '--career-start': `${gap.startPercent}%`, '--career-span': `${gap.spanPercent}%` }"
-            ></span>
-
-            <span
-              v-for="(item, index) in entries"
-              :key="`overview-${item.company}-${item.period}`"
-              class="river-overview-reach"
-              :class="{ selected: index === selectedIndex, current: item.current }"
-              :style="{ '--career-start': `${item.startPercent}%`, '--career-span': `${item.spanPercent}%` }"
-            ><i>{{ item.sequence }}</i></span>
-
-            <span class="river-overview-window"></span>
-          </div>
+            </li>
+          </ol>
         </div>
       </div>
+
+      <p v-else class="career-empty">暂无工作经历。</p>
     </div>
   </section>
 </template>
 
 <style scoped>
 .career-content {
-  width: min(1320px, 92vw);
+  --label-col: clamp(184px, 21vw, 282px);
+  --gutter: clamp(12px, 1.3vw, 18px);
+  --plot-pad: 0px;
+  --bar-min: 12px;
+  --career-ease: cubic-bezier(0.2, 0.72, 0.2, 1);
+  --hairline: rgba(232, 239, 240, 0.1);
+  /* The chart is the whole section, so it claims the full height the flex row offers instead of
+     sitting centred in it. `1fr` still falls back to the content height, which lets a long history
+     overflow into the scroll the global `.section-content` cap already provides. */
+  display: grid;
+  grid-template-rows: 1fr;
+  align-self: center;
+  width: min(1240px, 92vw);
   margin: 0 auto;
 }
 
-.time-river {
-  --river-month: clamp(15px, 1.9vw, 26px);
-  --river-travel: var(--motion-travel);
-  --river-ease: cubic-bezier(0.2, 0.72, 0.2, 1);
-  position: relative;
+/* One or two roles cannot fill a screen honestly: stretching them would float a 24px bar in the
+   middle of a 500px row. From three roles up the always-open panels give the canvas enough to say,
+   so it takes the full height; below that it keeps its natural height and the section centres it. */
+.career-content:has(.career-tracks > :nth-child(3)) {
+  align-self: stretch;
+}
+
+/* Every band below shares one column template, so bars, gaps and panel metadata all land on the
+   same time axis without a second measurement pass. */
+.career-chart {
   display: grid;
-  gap: clamp(14px, 2.2vh, 24px);
-  /* The record card slides in horizontally; `clip` (not `hidden`) keeps that bleed out of the
-     scrolling host without turning this grid into a scroll container. */
-  overflow-x: clip;
-  outline: none;
+  grid-template-rows: auto 1fr;
+  padding-right: clamp(8px, 1vw, 18px);
 }
 
-/* Inset ring: the viewport spans the full content width, so an outward offset would be clipped. */
-.time-river:focus-visible .river-viewport {
-  outline: 1px solid var(--lime);
-  outline-offset: -3px;
-}
-
-/* Only this layer clips, so the oversized track can never scroll the page sideways. */
-.river-viewport {
-  position: relative;
-  height: clamp(158px, 25vh, 216px);
-  overflow: hidden;
-  border-top: 1px solid rgba(232, 239, 240, 0.22);
-  border-bottom: 1px solid rgba(232, 239, 240, 0.22);
-  background:
-    linear-gradient(180deg, rgba(50, 214, 197, 0.05), rgba(7, 16, 20, 0.62) 62%),
-    rgba(7, 16, 20, 0.54);
-  cursor: grab;
-  user-select: none;
-  touch-action: pan-y;
-}
-
-.time-river.is-dragging .river-viewport {
-  cursor: grabbing;
-}
-
-/* Water surface: a lime highlight sweeping downstream, echoing the road pulse in the 3D scene. */
-.river-current {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    linear-gradient(90deg, transparent 0 42%, rgba(216, 242, 74, 0.16) 50%, transparent 58% 100%),
-    repeating-linear-gradient(90deg, rgba(232, 239, 240, 0.08) 0 1px, transparent 1px calc(var(--river-month) * 7)),
-    linear-gradient(180deg, transparent 58%, rgba(50, 214, 197, 0.1));
-  background-size: 220% 100%, auto, auto;
-  background-position: -60% 0, 0 0, 0 0;
-}
-
-.route-section.active .river-current {
-  animation: river-flow 9s linear infinite;
-}
-
-.river-track {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: calc(var(--river-month) * var(--river-total));
-  transform: translateX(calc(var(--river-month) * var(--river-focus) * -1));
-  transition: transform var(--river-travel) var(--river-ease);
-}
-
-.time-river.is-dragging .river-track {
-  transition: none;
-}
-
-.river-track::before {
-  position: absolute;
-  right: 0;
-  bottom: 30%;
-  left: 0;
-  height: 1px;
-  content: "";
-  background-image: linear-gradient(90deg, rgba(50, 214, 197, 0.5) 0 calc(var(--river-month) * 2), transparent calc(var(--river-month) * 2) calc(var(--river-month) * 7));
-  background-size: calc(var(--river-month) * 7) 100%;
-}
-
-.river-year {
-  position: absolute;
-  top: 8px;
-  left: calc(var(--river-month) * var(--river-at));
-  padding-left: 5px;
-  border-left: 1px solid rgba(232, 239, 240, 0.2);
-  color: rgba(232, 239, 240, 0.5);
-  font-family: Consolas, monospace;
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.river-shallow {
-  position: absolute;
-  top: 46%;
-  left: calc(var(--river-month) * var(--river-at));
-  display: flex;
-  width: calc(var(--river-month) * var(--river-span));
-  height: 9px;
-  align-items: center;
-  justify-content: center;
-  border-top: 1px dashed rgba(101, 113, 124, 0.85);
-  border-bottom: 1px dashed rgba(101, 113, 124, 0.85);
-  background: repeating-linear-gradient(135deg, rgba(101, 113, 124, 0.26) 0 3px, transparent 3px 7px);
-}
-
-.river-shallow i {
-  position: absolute;
-  top: 13px;
-  color: var(--steel);
-  font-family: Consolas, monospace;
-  font-size: 8px;
-  font-style: normal;
-  white-space: nowrap;
-}
-
-.river-reach {
-  position: absolute;
-  top: 34%;
-  left: calc(var(--river-month) * var(--river-at));
-  display: flex;
-  width: calc(var(--river-month) * var(--river-span));
-  min-width: 26px;
-  height: 46px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  padding: 0 8px;
-  overflow: hidden;
-  border: 1px solid rgba(50, 214, 197, 0.5);
-  border-radius: 3px;
-  color: var(--mist-muted);
-  text-align: left;
-  background: linear-gradient(180deg, rgba(50, 214, 197, 0.16), rgba(50, 214, 197, 0.05));
-  cursor: pointer;
-  transition: border-color 220ms ease, background 220ms ease, box-shadow 220ms ease, color 220ms ease;
-}
-
-.river-reach b {
-  overflow: hidden;
-  font-size: clamp(11px, 1vw, 14px);
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.river-reach i {
-  color: var(--steel);
-  font-family: Consolas, monospace;
-  font-size: 9px;
-  font-style: normal;
-  white-space: nowrap;
-}
-
-.river-reach.current {
-  border-color: rgba(216, 242, 74, 0.6);
-}
-
-.river-reach:hover,
-.river-reach.selected {
-  color: var(--mist);
-  border-color: var(--lime);
-  background: linear-gradient(180deg, rgba(50, 214, 197, 0.28), rgba(216, 242, 74, 0.16));
-  box-shadow: 0 0 22px rgba(50, 214, 197, 0.22);
-}
-
-.river-reach.selected i {
-  color: var(--lime);
-}
-
-.river-now {
-  position: absolute;
-  top: 26px;
-  bottom: 0;
-  left: calc(var(--river-month) * var(--river-at));
-  width: 1px;
-  padding-left: 5px;
-  color: var(--lime);
-  font-family: Consolas, monospace;
-  font-size: 8px;
-  background: var(--lime);
-  box-shadow: 0 0 12px rgba(216, 242, 74, 0.7);
-}
-
-/* Fixed reading head: the selected reach always travels under this line. */
-.river-reticle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  pointer-events: none;
-  background: linear-gradient(180deg, transparent, var(--coral) 18%, var(--coral) 82%, transparent);
-  box-shadow: 0 0 16px rgba(255, 107, 95, 0.55);
-}
-
-.river-reticle span {
-  position: absolute;
-  bottom: 6px;
-  left: 50%;
-  padding: 2px 7px;
-  border: 1px solid rgba(255, 107, 95, 0.55);
-  color: var(--mist);
-  background: rgba(7, 16, 20, 0.9);
-  font-family: Consolas, monospace;
-  font-size: 9px;
-  white-space: nowrap;
-  transform: translateX(-50%);
-}
-
-.river-fog {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, var(--carbon), rgba(7, 16, 20, 0) 16%, rgba(7, 16, 20, 0) 84%, var(--carbon));
-}
-
-.river-readout {
+.career-axis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px clamp(14px, 2vw, 30px);
-  margin: 0;
+  grid-template-columns: var(--label-col) minmax(0, 1fr);
+  align-items: end;
+  margin-bottom: 4px;
+  padding: 0 var(--plot-pad);
 }
 
-.river-readout div {
-  display: grid;
-  gap: 4px;
-  padding-left: 10px;
-  border-left: 1px solid var(--line);
-}
-
-.river-readout dt {
+.axis-caption {
+  padding-right: var(--gutter);
   color: var(--steel);
   font-family: Consolas, monospace;
   font-size: 9px;
   letter-spacing: 0.08em;
+  text-align: right;
 }
 
-.river-readout dd {
-  margin: 0;
-  color: var(--mist);
-  font-size: clamp(14px, 1.3vw, 19px);
-  font-weight: 600;
+.axis-scale {
+  position: relative;
+  height: 17px;
 }
 
-.river-readout small {
+.axis-tick {
+  position: absolute;
+  bottom: 0;
+  left: var(--tick-at);
+  width: 1px;
+  height: 5px;
+  background: rgba(232, 239, 240, 0.26);
+}
+
+.axis-tick i {
+  position: absolute;
+  bottom: 7px;
+  left: 0;
   color: var(--steel);
   font-family: Consolas, monospace;
   font-size: 9px;
-  font-weight: 400;
+  font-style: normal;
+  transform: translateX(-50%);
 }
 
-.river-record {
+.axis-tick:not(.is-labelled) i {
+  display: none;
+}
+
+.axis-tick:first-of-type i {
+  transform: none;
+}
+
+.axis-tick:last-of-type i {
+  transform: translateX(-100%);
+}
+
+.career-plot {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
-  gap: clamp(24px, 4vw, 62px);
-  align-items: center;
-  min-width: 0;
-  transition: opacity 220ms ease, filter 220ms ease;
-}
-
-.time-river.is-dragging .river-record {
-  opacity: 0.45;
-  filter: saturate(0.5);
-}
-
-.river-record-heading {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.river-record-heading h3 {
-  max-width: 560px;
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--mist);
-  font-size: clamp(26px, 3vw, 44px);
-  font-weight: 650;
-  line-height: 1.1;
-}
-
-.river-record-meta,
-.river-period {
-  display: flex;
-  align-items: center;
-  font-family: Consolas, monospace;
-}
-
-.river-record-meta {
-  gap: 12px;
-  margin-top: 14px;
-  font-size: 9px;
-}
-
-.river-record-meta > strong {
-  padding-left: 10px;
-  border-left: 1px solid var(--line);
-  color: var(--lime);
-  font-weight: 500;
-}
-
-.river-period {
-  gap: 10px;
-  color: var(--steel);
-  font-size: 11px;
-}
-
-.river-period strong {
-  color: var(--mist);
-  font-weight: 500;
-}
-
-.river-period span {
-  color: var(--coral);
-}
-
-.river-record-heading > p {
-  margin: 12px 0 0;
-  color: var(--steel);
-  font-size: clamp(12px, 1vw, 15px);
-}
-
-.river-responsibility {
-  min-width: 0;
-  padding: clamp(18px, 2.8vh, 32px) clamp(20px, 2.6vw, 38px);
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: rgba(13, 25, 29, 0.74);
-  box-shadow: inset 3px 0 0 rgba(50, 214, 197, 0.6);
+  background: linear-gradient(180deg, rgba(50, 214, 197, 0.05), rgba(7, 16, 20, 0.5) 34%, rgba(13, 25, 29, 0.62));
 }
 
-.river-responsibility h4 {
-  margin: 0 0 clamp(12px, 2vh, 22px);
-  color: var(--mist);
-  font-size: clamp(17px, 1.5vw, 22px);
-  font-weight: 600;
+/* Every band pads by `--plot-pad` and offsets by `--label-col`, so bars, gap markers and gridlines
+   keep one shared plot origin at every breakpoint. */
+.career-gridlines {
+  position: absolute;
+  top: 0;
+  right: var(--plot-pad);
+  bottom: 0;
+  left: calc(var(--label-col) + var(--plot-pad));
+  pointer-events: none;
 }
 
-.river-responsibility ul {
-  display: grid;
-  gap: clamp(10px, 1.6vh, 18px);
+.career-gridlines i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tick-at);
+  width: 1px;
+  background: rgba(232, 239, 240, 0.045);
+}
+
+.career-gridlines i.is-labelled {
+  background: rgba(232, 239, 240, 0.085);
+}
+
+.gridline-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tick-at);
+  width: 1px;
+  background: linear-gradient(180deg, rgba(255, 107, 95, 0.1), rgba(255, 107, 95, 0.7) 26%, rgba(255, 107, 95, 0.16));
+}
+
+.gridline-now em {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  color: var(--coral);
+  font-family: Consolas, monospace;
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.12em;
+}
+
+/* Rows spread the plot's spare height between themselves, so three roles breathe and ten still fit.
+   They never shrink, which keeps the plot's own height content-driven and safe from its `overflow`. */
+.career-tracks {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.river-responsibility li {
+.career-row {
   position: relative;
-  padding-left: 20px;
-  color: var(--mist-muted);
-  font-size: clamp(12px, 1.05vw, 16px);
-  line-height: 1.6;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  transition: background 280ms ease, box-shadow 280ms ease;
 }
 
-.river-responsibility li::before {
+.career-row + .career-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.career-row:not(.is-open):hover {
+  background: rgba(232, 239, 240, 0.028);
+}
+
+.career-row.is-open {
+  background: linear-gradient(90deg, rgba(50, 214, 197, 0.1), rgba(50, 214, 197, 0.03) 46%, transparent);
+  box-shadow: inset 2px 0 0 var(--lime);
+}
+
+.career-track {
+  display: grid;
+  flex: 1 0 auto;
+  grid-template-columns: var(--label-col) minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: clamp(50px, 7.2vh, 64px);
+  padding: 8px var(--plot-pad);
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.career-track:focus-visible {
+  outline-offset: -3px;
+}
+
+.career-row.is-open .career-track {
+  cursor: default;
+}
+
+.track-label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: baseline;
+  min-width: 0;
+  padding-right: var(--gutter);
+}
+
+.track-name {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.name-company {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--mist-muted);
+  font-size: clamp(14px, 1.26vw, 19px);
+  font-weight: 620;
+  line-height: 1.24;
+  transition: color 220ms ease;
+}
+
+.career-track:hover .name-company,
+.career-row.is-open .name-company {
+  color: var(--mist);
+}
+
+.company-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.company-flag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid rgba(216, 242, 74, 0.45);
+  border-radius: 2px;
+  color: var(--lime);
+  font-family: Consolas, monospace;
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+
+.name-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meta-role {
+  overflow: hidden;
+  color: var(--steel);
+  font-size: clamp(11px, 0.86vw, 13px);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.meta-span {
+  flex: none;
+  color: var(--teal);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+}
+
+.meta-span::before {
+  margin-right: 7px;
+  color: var(--steel);
+  content: "·";
+}
+
+.track-lane {
+  position: relative;
+  height: clamp(19px, 2.6vh, 25px);
+  min-width: 0;
+}
+
+/* Score mode has the height to spare, so the bars carry more weight in the composition. */
+.career-tracks:not(.is-folded) .track-lane {
+  height: clamp(22px, 3.2vh, 32px);
+}
+
+/* `min()`/`max()` keep a one-month role visible without ever pushing the bar past the axis end. */
+.track-bar {
   position: absolute;
-  top: 0.66em;
-  left: 0;
-  width: 6px;
-  height: 6px;
+  top: 0;
+  bottom: 0;
+  left: min(var(--bar-start), calc(100% - var(--bar-min)));
+  width: max(var(--bar-span), var(--bar-min));
+  border-radius: 3px;
+  background: linear-gradient(150deg, rgba(50, 214, 197, 0.88), rgba(50, 214, 197, 0.4));
+  box-shadow: inset 0 1px 0 rgba(232, 239, 240, 0.24);
+  clip-path: inset(0 100% 0 0 round 3px);
+  transition-property: clip-path, opacity, box-shadow, background;
+  transition-duration: 760ms, 240ms, 240ms, 240ms;
+  transition-timing-function: var(--career-ease), ease, ease, ease;
+  transition-delay: calc(var(--row-index, 0) * 80ms), 0s, 0s, 0s;
+}
+
+.route-section.is-visible .track-bar {
+  clip-path: inset(0 0 0 0 round 3px);
+}
+
+.career-row:not(.is-open) .track-bar {
+  opacity: 0.6;
+}
+
+.career-track:hover .track-bar {
+  opacity: 1;
+}
+
+.career-row.is-current .track-bar {
+  background: linear-gradient(120deg, rgba(50, 214, 197, 0.9), rgba(216, 242, 74, 0.8));
+}
+
+.career-row.is-open .track-bar {
+  box-shadow:
+    inset 0 1px 0 rgba(232, 239, 240, 0.4),
+    0 0 24px rgba(50, 214, 197, 0.3);
+}
+
+/* Punch-hole marker on the live role, echoing the pulsing status dot in the header. */
+.career-row.is-current .track-bar::after {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 5px;
+  height: 5px;
   content: "";
   border-radius: 50%;
-  background: var(--teal);
-  box-shadow: 0 0 10px rgba(50, 214, 197, 0.55);
+  background: var(--carbon);
+  transform: translateY(-50%);
 }
 
-.river-record-enter-active,
-.river-record-leave-active {
-  transition: opacity 180ms ease, transform 360ms var(--river-ease);
+.route-section.active .career-row.is-current .track-bar::after {
+  animation: career-pulse 1.9s ease-in-out infinite;
 }
 
-.river-record-enter-from {
-  opacity: 0;
-  transform: translateX(28px);
-}
-
-.river-record-leave-to {
-  opacity: 0;
-  transform: translateX(-22px);
-}
-
-.river-overview {
+/* Score mode leaves every panel open and marks the selection by contrast alone; folded mode is the
+   disclosure fallback, where only the open row's panel has a height. */
+.career-panel {
   display: grid;
-  gap: 6px;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 440ms var(--career-ease);
 }
 
-.river-overview-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.career-tracks.is-folded .career-panel {
+  grid-template-rows: 0fr;
+}
+
+.career-tracks.is-folded .career-row.is-open .career-panel {
+  grid-template-rows: 1fr;
+}
+
+/* Clipping the grid item is what lets the `0fr` row actually collapse to zero. */
+.panel-clip {
+  overflow: hidden;
+}
+
+/* Period, tags and duty list share the chart's two columns: the label column already reserves the
+   width, so parking the metadata there keeps every panel as short as its longest single column. */
+.panel-body {
+  display: grid;
+  grid-template-columns: var(--label-col) minmax(0, 1fr);
+  align-content: start;
+  padding: 0 var(--plot-pad) clamp(12px, 1.8vh, 20px);
+  transition: opacity 280ms ease;
+}
+
+/* Unselected detail recedes rather than disappears — 0.78 keeps `--mist-muted` above 5:1 on the
+   plot background, so every role stays readable without competing with the selected one. */
+.career-tracks:not(.is-folded) .career-row:not(.is-open) .panel-body {
+  opacity: 0.78;
+}
+
+.panel-meta {
+  display: grid;
+  gap: 4px;
+  grid-column: 1;
+  align-content: start;
+  padding-right: var(--gutter);
+  text-align: right;
+}
+
+.panel-period {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: end;
+  gap: 7px;
+  align-items: baseline;
+  margin: 0;
+  color: var(--mist-muted);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+
+.panel-period span {
+  color: var(--coral);
+  font-size: 10px;
+  /* The period reads left to right, so the downward arrow turns to follow it. */
+  transform: rotate(-90deg);
+}
+
+.panel-period strong {
+  color: var(--lime);
+  font-weight: 500;
+}
+
+.panel-since {
+  margin: 0;
   color: var(--steel);
   font-family: Consolas, monospace;
   font-size: 9px;
 }
 
-.river-overview-meta strong {
-  color: var(--teal);
-  font-weight: 500;
+.panel-highlights {
+  display: grid;
+  gap: clamp(7px, 1.15vh, 12px);
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-content: start;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.river-overview-axis {
+.panel-highlights li {
   position: relative;
-  height: 34px;
-  margin-right: 10px;
-  border-top: 1px solid var(--line);
-  cursor: pointer;
+  padding-left: 19px;
+  color: var(--mist-muted);
+  font-size: clamp(12px, 1.02vw, 15px);
+  line-height: 1.62;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 320ms ease, transform 340ms var(--career-ease);
 }
 
-.river-overview-year {
-  position: absolute;
-  top: 3px;
-  left: var(--tick-position);
-  color: var(--steel);
-  font-family: Consolas, monospace;
-  font-size: 8px;
-  transform: translateX(-50%);
-}
-
-.river-overview-year:first-of-type {
+.career-row.is-open .panel-highlights li {
+  opacity: 1;
   transform: none;
+  transition-delay: calc(130ms + var(--item-index, 0) * 70ms);
 }
 
-.river-overview-gap,
-.river-overview-reach {
+/* Score mode has nothing left to open, so the stagger runs once on entry and cascades down the rows
+   instead of across a single panel. */
+.route-section.is-visible .career-tracks:not(.is-folded) .panel-highlights li {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(180ms + var(--row-index, 0) * 110ms + var(--item-index, 0) * 60ms);
+}
+
+.panel-highlights li::before {
   position: absolute;
-  top: 19px;
-  left: var(--career-start);
-  width: var(--career-span);
-  height: 10px;
+  top: 0.62em;
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  content: "";
+  background: var(--teal);
+  box-shadow: 0 0 9px rgba(50, 214, 197, 0.55);
+  transform: rotate(45deg);
 }
 
-.river-overview-gap {
-  top: 22px;
-  height: 4px;
-  background: repeating-linear-gradient(135deg, rgba(101, 113, 124, 0.5) 0 2px, transparent 2px 5px);
+/* Tags read as one metadata line instead of badges: outlined pills competed with the bars for
+   attention and sat awkwardly under the right-aligned period, while slash-separated monospace
+   continues the type of the period directly above them. */
+.panel-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 0;
+  grid-column: 1;
+  justify-content: flex-end;
+  margin: clamp(7px, 1vh, 11px) 0 0;
+  padding: 0 var(--gutter) 0 0;
+  list-style: none;
 }
 
-.river-overview-reach {
-  min-width: 14px;
-  border: 1px solid rgba(50, 214, 197, 0.5);
-  border-radius: 2px;
-  background: rgba(50, 214, 197, 0.2);
-  transition: border-color 180ms ease, background 180ms ease;
-}
-
-.river-overview-reach i {
-  position: absolute;
-  top: 11px;
-  left: 0;
-  color: var(--steel);
+.panel-tags li {
+  color: var(--mist-muted);
   font-family: Consolas, monospace;
-  font-size: 8px;
-  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  transition: color 220ms ease;
 }
 
-.river-overview-reach.current {
-  border-color: rgba(216, 242, 74, 0.6);
+/* The separator travels with its own tag, so a wrapped line never leaves a dangling slash behind. */
+.panel-tags li + li::before {
+  margin: 0 7px;
+  color: var(--steel);
+  content: "/";
 }
 
-.river-overview-reach.selected {
-  border-color: var(--lime);
-  background: rgba(216, 242, 74, 0.34);
+.career-row.is-open .panel-tags li {
+  color: var(--teal);
 }
 
-.river-overview-reach.selected i {
-  color: var(--lime);
+/* Row density steps down as the configured history grows, so a long list stays scannable instead of
+   pushing most of the chart below the section's scroll cap. */
+.career-tracks:has(> :nth-child(7)) .career-track {
+  min-height: clamp(44px, 6vh, 54px);
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
-/* Mirrors how much of the axis the river viewport currently shows. */
-.river-overview-window {
-  position: absolute;
-  top: 14px;
-  left: var(--window-start);
-  width: var(--window-span);
-  height: 20px;
-  border: 1px solid rgba(255, 107, 95, 0.5);
-  border-radius: 2px;
-  background: rgba(255, 107, 95, 0.08);
-  transition: left var(--river-travel) var(--river-ease), width var(--river-travel) var(--river-ease);
+/* The company line is the tallest thing in a row, so trimming it is what actually buys the height a
+   seven-role history needs to stay inside one screen. */
+.career-tracks:has(> :nth-child(7)) .name-company {
+  font-size: clamp(13px, 1.06vw, 16px);
 }
 
-.time-river.is-dragging .river-overview-window {
-  transition: none;
+.career-tracks:has(> :nth-child(10)) .career-track {
+  min-height: clamp(40px, 5.2vh, 48px);
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
-@keyframes river-flow {
-  from {
-    background-position: -60% 0, 0 0, 0 0;
-  }
+/* With no roles there is no row to stretch, so the placeholder holds its own canvas height and reads
+   as a chart waiting for data rather than a stray line of text. */
+.career-empty {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: clamp(160px, 32vh, 260px);
+  margin: 0;
+  padding: 26px;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  color: var(--steel);
+  font-size: 14px;
+}
 
-  to {
-    background-position: 160% 0, calc(var(--river-month) * -7) 0, 0 0;
+@keyframes career-pulse {
+  50% {
+    opacity: 0.28;
+    transform: translateY(-50%) scale(0.62);
   }
 }
 
 @media (max-width: 900px) {
   .career-content {
-    width: min(820px, 84vw);
-  }
-
-  .time-river {
-    --river-month: clamp(13px, 3vw, 20px);
-  }
-
-  .river-record {
-    grid-template-columns: minmax(210px, 0.8fr) minmax(0, 1.2fr);
-    gap: 26px;
+    --label-col: clamp(152px, 25vw, 208px);
+    width: min(880px, 88vw);
   }
 }
 
+/* Below this the label column would starve the axis, so labels stack above a full-width lane. */
 @media (max-width: 680px) {
   .career-content {
+    --label-col: 0px;
+    --gutter: 0px;
+    --plot-pad: 12px;
     width: 100%;
   }
 
-  .time-river {
-    --river-month: clamp(10px, 3.4vw, 14px);
+  .career-axis,
+  .career-track,
+  .panel-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .career-axis {
+    gap: 5px;
+  }
+
+  .axis-caption {
+    text-align: left;
+  }
+
+  .career-track {
+    gap: 10px;
+    padding-top: 13px;
+    padding-bottom: 13px;
+  }
+
+  /* One column means the two-column panel placement has to unwind, and the tags read best last. */
+  .panel-body {
+    row-gap: 12px;
+  }
+
+  .panel-meta,
+  .panel-tags,
+  .panel-highlights {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .panel-meta {
+    grid-auto-flow: column;
+    justify-content: start;
     gap: 12px;
+    align-items: baseline;
+    text-align: left;
   }
 
-  .river-viewport {
-    height: clamp(140px, 22vh, 172px);
+  .panel-period {
+    justify-content: start;
   }
 
-  .river-readout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .river-readout dd {
-    font-size: 13px;
-  }
-
-  .river-record {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-
-  .river-record-heading h3 {
-    font-size: clamp(23px, 7vw, 30px);
-  }
-
-  .river-responsibility {
-    padding: 14px 16px;
-  }
-
-  .river-overview-year:nth-of-type(even) {
-    display: none;
+  .panel-tags {
+    justify-content: flex-start;
+    order: 1;
+    margin-top: 0;
+    padding-right: 0;
   }
 }
 
@@ -922,51 +805,28 @@ onUnmounted(() => {
     max-height: calc(100svh - 100px);
   }
 
-  .time-river {
-    gap: 8px;
+  .career-track {
+    min-height: 44px;
+    padding: 5px 0;
   }
 
-  .river-viewport {
-    height: 128px;
-  }
-
-  .river-readout {
-    gap: 6px 18px;
-  }
-
-  .river-readout dd {
-    font-size: 13px;
-  }
-
-  .river-record {
-    gap: 24px;
-  }
-
-  .river-record-heading h3 {
-    font-size: 26px;
-  }
-
-  .river-responsibility {
-    padding: 12px 18px;
-  }
-
-  .river-responsibility h4 {
-    margin-bottom: 8px;
-    font-size: 14px;
-  }
-
-  .river-responsibility ul {
-    gap: 6px;
-  }
-
-  .river-responsibility li {
-    padding-left: 16px;
-    font-size: 10px;
+  .panel-highlights li {
+    font-size: 11px;
     line-height: 1.45;
   }
+}
 
-  .river-overview-axis {
-    height: 28px;
+/* The global reduce sweep zeroes durations but leaves delays intact, so the staggered reveals would
+   still trickle in one by one. Drop the delays and the decorative pulse outright. */
+@media (prefers-reduced-motion: reduce) {
+  .track-bar,
+  .career-row.is-open .panel-highlights li,
+  .route-section.is-visible .career-tracks:not(.is-folded) .panel-highlights li {
+    transition-delay: 0s;
+  }
+
+  .route-section.active .career-row.is-current .track-bar::after {
+    animation: none;
   }
 }
 </style>

@@ -101,8 +101,6 @@ src/
 
 - 修改 JavaScript 或 Vue 文件后，运行项目中实际存在的 lint、test 和 build 脚本。
 - 至少运行 `pnpm run build` 验证生产构建。
-- 涉及 composable、工具函数或组件状态时，补充 Vitest 测试。
-- 涉及关键用户流程时，补充 Playwright 测试。
 - 涉及页面交互时，检查键盘操作、焦点状态、移动端布局和错误状态。
 - 没有实际运行的命令不得声称已通过。
 
