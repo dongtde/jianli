@@ -16,12 +16,20 @@ import { useReducedMotion } from '../composables/useReducedMotion'
 import { useSectionNavigation } from '../composables/useSectionNavigation'
 import { useTypewriter } from '../composables/useTypewriter'
 import { formatCounter } from '../utils/format'
+import { buildCareerTimeline } from '../utils/timeline'
 import './resume/resume.css'
 
 const sectionIds = resumeSections.map((section) => section.id)
 const selectedProjectId = ref(projects[0]?.id ?? 'twin')
 const menuOpen = ref(false)
 const soundOn = ref(false)
+const routeProgress = ref(0)
+
+// The experience list is static config, so the corridor stations are derived once.
+const careerTimeline = buildCareerTimeline(experience)
+const routeStops = careerTimeline.axisMonthCount
+  ? careerTimeline.entries.map((item) => item.focusMonthOffset / careerTimeline.axisMonthCount)
+  : []
 
 const { reducedMotion } = useReducedMotion()
 const {
@@ -55,6 +63,10 @@ const selectProject = (id) => {
 const copyEmail = () => {
   copyText(profile.email)
 }
+
+const handleCareerFocus = ({ progress }) => {
+  routeProgress.value = progress
+}
 </script>
 
 <template>
@@ -63,7 +75,8 @@ const copyEmail = () => {
 
     <SignalWorld
       :active-section="worldSection"
-      :scroll-progress="scrollProgress"
+      :route-progress="routeProgress"
+      :route-stops="routeStops"
       :reduced-motion="reducedMotion"
     />
 
@@ -101,6 +114,7 @@ const copyEmail = () => {
         :active="activeSection === 'route'"
         :visible="revealedSections.has('route')"
         :experience="experience"
+        @focus-change="handleCareerFocus"
       />
 
       <ProjectsSection

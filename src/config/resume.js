@@ -49,7 +49,7 @@ export const profile = {
 
 /**
  * Work history entries displayed in the career route section.
- * @type {{period: string, company: string, role: string, signal: string}[]}
+ * @type {{period: string, company: string, role: string, signal: string, highlights: string[]}[]}
  */
 export const experience = [
   {
@@ -57,18 +57,33 @@ export const experience = [
     company: '重庆软博科技',
     role: '前端开发工程师',
     signal: '数字孪生 · 地图可视化 · 实时数据',
+    highlights: [
+      '参与数字孪生项目的前端开发，整合地图、三维场景与业务数据展示',
+      '实现车辆、设备、轨迹、告警等实时数据的可视化交互与状态联动',
+      '持续优化复杂场景的加载性能、交互体验与页面稳定性',
+    ],
   },
   {
     period: '2023.10 - 2024.02',
     company: '重庆同远影像科技',
     role: '前端开发工程师',
     signal: '后台系统 · H5 · 小程序',
+    highlights: [
+      '负责后台管理系统、H5 与小程序的页面开发和接口联调',
+      '配合产品与后端团队拆解需求，完成业务流程和移动端功能交付',
+      '维护公共组件并持续优化页面兼容性与用户体验',
+    ],
   },
   {
     period: '2021.11 - 2023.07',
     company: '重庆纵浪科技有限公司',
     role: '前端开发工程师',
     signal: 'ERP · 电商 · 多端业务',
+    highlights: [
+      '参与 ERP、电商及内容运营系统开发，覆盖商品、订单和任务等业务',
+      '使用 Vue、Element UI、Vant 与 Uniapp 完成后台、H5 和小程序开发',
+      '参与需求评审、接口联调和持续迭代，保障多端业务稳定交付',
+    ],
   },
 ]
 

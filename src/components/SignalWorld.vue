@@ -4,16 +4,33 @@ import * as THREE from 'three'
 
 const props = defineProps({
   activeSection: { type: String, default: 'home' },
-  scrollProgress: { type: Number, default: 0 },
+  routeProgress: { type: Number, default: 0 },
+  routeStops: { type: Array, default: () => [] },
   reducedMotion: { type: Boolean, default: false },
 })
 
 const canvasHost = ref(null)
 const fallback = ref(false)
 
+// The stretch of road the camera travels while the route section is active; the career timeline
+// maps onto it linearly, so river stations and 3D stations share one scale.
+const ROUTE_CORRIDOR_START = -24
+const ROUTE_CORRIDOR_END = -54
+// The camera stops short of the focused station so the station stays ahead of it, in frame.
+const ROUTE_CAMERA_STANDOFF = 9
+
+/**
+ * Maps normalized career progress onto the corridor.
+ * @param {number} progress - Normalized position, clamped to 0..1.
+ * @returns {number} World z coordinate.
+ */
+const corridorZ = (progress) => {
+  const clamped = Math.min(1, Math.max(0, progress || 0))
+  return ROUTE_CORRIDOR_START + (ROUTE_CORRIDOR_END - ROUTE_CORRIDOR_START) * clamped
+}
+
 const sectionZ = {
   home: 8,
-  route: -26,
   twin: -64,
   network: -104,
   business: -144,
@@ -142,7 +159,14 @@ function addBuildings() {
   scene.add(buildings, litBuildings)
 }
 
+/**
+ * Places one lit station per career entry, using the same corridor scale as the camera travel.
+ * Reads `routeStops` once during `init()`: the experience list is static configuration, so the
+ * stations are never rebuilt afterwards.
+ */
 function addRouteStations() {
+  if (!props.routeStops.length) return
+
   const stationGeometry = new THREE.CylinderGeometry(1.5, 2, 0.4, 24)
   const stationMaterial = material({
     color: 0x20393a,
@@ -151,7 +175,8 @@ function addRouteStations() {
     roughness: 0.55,
   })
 
-  ;[-28, -38, -49].forEach((z, index) => {
+  props.routeStops.forEach((stop, index) => {
+    const z = corridorZ(stop)
     const station = new THREE.Mesh(stationGeometry, stationMaterial)
     station.position.set(index % 2 === 0 ? -5.5 : 5.5, 0.35, z)
     scene.add(station)
@@ -413,7 +438,8 @@ function animate() {
 
   const delta = Math.min(clock.getDelta(), 0.033)
   const elapsed = clock.elapsedTime
-  const ease = props.reducedMotion ? 1 : 1 - Math.pow(0.0008, delta)
+  // 0.02 per second reaches ~90% in about 590ms, matching the river's --motion-travel pan.
+  const ease = props.reducedMotion ? 1 : 1 - Math.pow(0.02, delta)
 
   camera.position.z += (targetZ - camera.position.z) * ease
   camera.position.x += (targetX - camera.position.x) * ease
@@ -448,12 +474,16 @@ function animate() {
   animationFrame = requestAnimationFrame(animate)
 }
 
-function updateTarget(section) {
-  targetZ = sectionZ[section] ?? sectionZ.home
+/** Re-aims the camera; inside the route section the target follows the scrubbed career position. */
+function updateTarget() {
+  const section = props.activeSection
+  targetZ = section === 'route'
+    ? corridorZ(props.routeProgress) + ROUTE_CAMERA_STANDOFF
+    : sectionZ[section] ?? sectionZ.home
   targetX = section === 'twin' ? -8 : section === 'network' ? 7 : section === 'business' ? -5 : 0
 }
 
-watch(() => props.activeSection, updateTarget, { immediate: true })
+watch([() => props.activeSection, () => props.routeProgress], updateTarget, { immediate: true })
 
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
