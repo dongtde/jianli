@@ -1,6 +1,6 @@
 import { computed, onMounted, onUnmounted, readonly, ref, unref } from 'vue'
 
-const SCROLLABLE_PANEL_SELECTOR = '.section-content, .projects-layout'
+const SCROLLABLE_PANEL_SELECTOR = '.section-content, .project-card'
 const TOUCH_INTENT_THRESHOLD = 8
 const TOUCH_NAVIGATION_THRESHOLD = 48
 
@@ -103,10 +103,19 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
   }
 
   const canPanelConsumeScroll = (target, direction) => {
-    const scrollablePanel = target instanceof Element
-      ? target.closest(SCROLLABLE_PANEL_SELECTOR)
-      : null
-    return canScrollElementInDirection(scrollablePanel, direction)
+    if (!(target instanceof Element)) return false
+
+    const scrollablePanel = target.closest(SCROLLABLE_PANEL_SELECTOR)
+    if (canScrollElementInDirection(scrollablePanel, direction)) return true
+
+    const projectsSection = target.closest('.projects-section')
+    if (projectsSection) {
+      return direction > 0
+        ? projectsSection.dataset.canNext === 'true'
+        : projectsSection.dataset.canPrev === 'true'
+    }
+
+    return false
   }
 
   const handleWheel = (event) => {
@@ -156,6 +165,7 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
   }
 
   const handleTouchMove = (event) => {
+    if (event.__projectDeckHandled) return
     if (!touchStartPoint || event.touches.length !== 1) return
 
     const touch = event.touches[0]
@@ -185,6 +195,10 @@ export function useSectionNavigation(sectionIds, reducedMotion) {
   }
 
   const handleTouchEnd = (event) => {
+    if (event.__projectDeckHandled) {
+      resetTouchGesture()
+      return
+    }
     if (!touchStartPoint) return
 
     const touch = event.changedTouches[0]

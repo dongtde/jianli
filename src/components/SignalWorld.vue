@@ -4,6 +4,8 @@ import * as THREE from 'three'
 
 const props = defineProps({
   activeSection: { type: String, default: 'home' },
+  projectIndex: { type: Number, default: 0 },
+  projectCount: { type: Number, default: 1 },
   routeProgress: { type: Number, default: 0 },
   routeStops: { type: Array, default: () => [] },
   reducedMotion: { type: Boolean, default: false },
@@ -18,6 +20,8 @@ const ROUTE_CORRIDOR_START = -24
 const ROUTE_CORRIDOR_END = -54
 // The camera stops short of the focused station so the station stays ahead of it, in frame.
 const ROUTE_CAMERA_STANDOFF = 9
+const PROJECT_CORRIDOR_START = -68
+const PROJECT_CORRIDOR_END = -148
 
 /**
  * Maps normalized career progress onto the corridor.
@@ -31,12 +35,21 @@ const corridorZ = (progress) => {
 
 const sectionZ = {
   home: 8,
-  twin: -64,
-  network: -104,
-  business: -144,
   skills: -184,
   about: -220,
   contact: -254,
+}
+
+/**
+ * Maps project selection onto the same corridor as the project scenery.
+ * @param {number} index - Selected project index.
+ * @param {number} count - Total project count.
+ * @returns {number} World z coordinate.
+ */
+const projectZ = (index, count) => {
+  const denominator = Math.max(1, count - 1)
+  const progress = Math.min(1, Math.max(0, index / denominator))
+  return PROJECT_CORRIDOR_START + (PROJECT_CORRIDOR_END - PROJECT_CORRIDOR_START) * progress
 }
 
 let scene
@@ -479,11 +492,13 @@ function updateTarget() {
   const section = props.activeSection
   targetZ = section === 'route'
     ? corridorZ(props.routeProgress) + ROUTE_CAMERA_STANDOFF
+    : section === 'projects'
+      ? projectZ(props.projectIndex, props.projectCount) + ROUTE_CAMERA_STANDOFF
     : sectionZ[section] ?? sectionZ.home
-  targetX = section === 'twin' ? -8 : section === 'network' ? 7 : section === 'business' ? -5 : 0
+  targetX = section === 'projects' ? (props.projectIndex % 2 === 0 ? -5 : 6) : 0
 }
 
-watch([() => props.activeSection, () => props.routeProgress], updateTarget, { immediate: true })
+watch([() => props.activeSection, () => props.projectIndex, () => props.projectCount, () => props.routeProgress], updateTarget, { immediate: true })
 
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)

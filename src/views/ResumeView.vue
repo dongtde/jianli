@@ -20,7 +20,7 @@ import { buildCareerTimeline } from '../utils/timeline'
 import './resume/resume.css'
 
 const sectionIds = resumeSections.map((section) => section.id)
-const selectedProjectId = ref(projects[0]?.id ?? 'twin')
+const selectedProjectId = ref(projects[0]?.id ?? '')
 const menuOpen = ref(false)
 const soundOn = ref(false)
 const routeProgress = ref(0)
@@ -45,10 +45,8 @@ const { copied, copyText } = useClipboard()
 
 const activeIndex = computed(() => Math.max(0, sectionIds.indexOf(activeSection.value)))
 const activeLabel = computed(() => formatCounter(activeIndex.value + 1, sectionIds.length))
-const selectedProject = computed(() => projects.find((project) => project.id === selectedProjectId.value) ?? projects[0])
 const selectedProjectIndex = computed(() => Math.max(0, projects.findIndex((project) => project.id === selectedProjectId.value)))
-const projectSignalProgress = computed(() => `${projects.length > 1 ? (selectedProjectIndex.value / (projects.length - 1)) * 100 : 0}%`)
-const worldSection = computed(() => activeSection.value === 'projects' ? selectedProjectId.value : activeSection.value)
+const worldSection = computed(() => activeSection.value)
 
 const navigateToSection = (id) => {
   scrollToSection(id)
@@ -75,6 +73,8 @@ const handleCareerFocus = ({ progress }) => {
 
     <SignalWorld
       :active-section="worldSection"
+      :project-index="selectedProjectIndex"
+      :project-count="projects.length"
       :route-progress="routeProgress"
       :route-stops="routeStops"
       :reduced-motion="reducedMotion"
@@ -121,10 +121,7 @@ const handleCareerFocus = ({ progress }) => {
         :active="activeSection === 'projects'"
         :visible="revealedSections.has('projects')"
         :projects="projects"
-        :selected-project="selectedProject"
         :selected-project-id="selectedProjectId"
-        :selected-project-index="selectedProjectIndex"
-        :project-signal-progress="projectSignalProgress"
         @select-project="selectProject"
       />
 
